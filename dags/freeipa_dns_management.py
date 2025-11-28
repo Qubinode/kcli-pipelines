@@ -18,7 +18,7 @@ Usage:
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import BranchPythonOperator, PythonOperator
+from airflow.operators.python import BranchPythonOperator
 
 default_args = {
     'owner': 'qubinode',
@@ -42,8 +42,6 @@ dag = DAG(
         'hostname': '',  # e.g., mirror-registry
         'ip_address': '',  # e.g., 192.168.122.61
         'domain': 'example.com',
-        'freeipa_server': 'freeipa.example.com',
-        'freeipa_password': 'password',  # IdM admin password
     },
     doc_md="""
 # FreeIPA DNS Management DAG
@@ -59,10 +57,11 @@ Manages DNS A records in FreeIPA/IdM server. Can be used to:
 |-----------|-------------|---------|
 | action | `present` to add, `absent` to remove | present |
 | hostname | Short hostname (e.g., mirror-registry) | required |
-| ip_address | IP address for the A record | required |
+| ip_address | IP address for the A record | required (for present) |
 | domain | DNS zone/domain | example.com |
-| freeipa_server | FreeIPA server FQDN | freeipa.example.com |
-| freeipa_password | IdM admin password | password |
+
+**Note**: This DAG uses LDAP EXTERNAL auth via SSH to the FreeIPA server.
+No admin password is required - it uses root access on the FreeIPA VM.
 
 ## Example Usage
 
@@ -125,8 +124,6 @@ add_dns = BashOperator(
     HOSTNAME="{{ params.hostname }}"
     IP_ADDRESS="{{ params.ip_address }}"
     DOMAIN="{{ params.domain }}"
-    FREEIPA_SERVER="{{ params.freeipa_server }}"
-    FREEIPA_PASSWORD="{{ params.freeipa_password }}"
     
     FQDN="${HOSTNAME}.${DOMAIN}"
     
@@ -209,17 +206,21 @@ remove_dns = BashOperator(
     
     HOSTNAME="{{ params.hostname }}"
     DOMAIN="{{ params.domain }}"
-    FREEIPA_SERVER="{{ params.freeipa_server }}"
-    FREEIPA_PASSWORD="{{ params.freeipa_password }}"
     
     echo "Hostname: $HOSTNAME"
     echo "Domain Zone: $DOMAIN"
     echo ""
     
-    # Get current IP for the record (needed for removal)
+    # Get FreeIPA IP
     FREEIPA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "kcli info vm freeipa 2>/dev/null | grep 'ip:' | awk '{print \\$2}' | head -1")
     
+    if [ -z "$FREEIPA_IP" ]; then
+        echo "[WARN] FreeIPA not found - skipping DNS removal"
+        exit 0
+    fi
+    
+    # Check if record exists
     CURRENT_IP=$(ssh -o StrictHostKeyChecking=no root@localhost \
         "dig +short ${HOSTNAME}.${DOMAIN} @${FREEIPA_IP}" 2>/dev/null || true)
     
@@ -230,20 +231,14 @@ remove_dns = BashOperator(
     fi
     
     echo "Current IP: $CURRENT_IP"
+    echo "FreeIPA IP: $FREEIPA_IP"
     echo ""
     
-    # Run ansible playbook to remove DNS record
-    echo "[INFO] Removing DNS A record..."
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost bash -s <<EOF
-cd /opt/kcli-pipelines
-
-ansible-playbook helper_scripts/add_ipa_entry.yaml \
-    -e "key=${HOSTNAME}" \
-    -e "value=${CURRENT_IP}" \
-    -e "freeipa_server_domain=${DOMAIN}" \
-    -e "freeipa_server_fqdn=${FREEIPA_SERVER}" \
-    -e "freeipa_server_admin_password=${FREEIPA_PASSWORD}" \
-    -e "action=absent"
+    # Remove DNS record using LDAP EXTERNAL auth
+    echo "[INFO] Removing DNS A record via LDAP..."
+    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF
+ldapdelete -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket \
+    "idnsname=${HOSTNAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com" 2>&1
 EOF
     
     if [ $? -eq 0 ]; then
