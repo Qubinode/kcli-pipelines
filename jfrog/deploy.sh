@@ -247,11 +247,12 @@ EOF
     ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<EOF
 echo "[INFO] Setting up JFrog Artifactory ${JFROG_EDITION} v${JFROG_VERSION}..."
 
-# Create directories
+# Create directories with correct ownership (JFrog runs as UID 1030)
 mkdir -p /opt/jfrog/artifactory/var/etc
 mkdir -p /opt/jfrog/artifactory/var/data
 mkdir -p /opt/jfrog/artifactory/var/logs
-chmod -R 777 /opt/jfrog/artifactory/var
+chown -R 1030:1030 /opt/jfrog/artifactory/var
+chmod -R 755 /opt/jfrog/artifactory/var
 
 # Create system.yaml
 cat > /opt/jfrog/artifactory/var/etc/system.yaml <<YAML
