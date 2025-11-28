@@ -3,3 +3,6 @@ aider_setup.sh
 .aider*
 aider-env/
 .env
+__pycache__/
+*.pyc
+.vault_password

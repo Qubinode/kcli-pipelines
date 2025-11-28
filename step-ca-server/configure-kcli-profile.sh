@@ -70,14 +70,14 @@ echo "COMMUNITY_VERSION is set to: $COMMUNITY_VERSION"
 
 if [ "$COMMUNITY_VERSION" == "true" ]; then
   echo "Community version"
-  export IMAGE_NAME=centos8stream
+  export IMAGE_NAME=centos9stream
   export TEMPLATE_NAME=template-centos.yaml
-  export LOGIN_USER=centos
+  export LOGIN_USER=cloud-user
   echo "IMAGE_NAME: $IMAGE_NAME"
   echo "TEMPLATE_NAME: $TEMPLATE_NAME"
 elif [ "$COMMUNITY_VERSION" == "false" ]; then
   echo "Enterprise version"
-  export IMAGE_NAME=rhel8
+  export IMAGE_NAME=rhel9
   export TEMPLATE_NAME=template.yaml
   export LOGIN_USER=cloud-user
   echo "IMAGE_NAME: $IMAGE_NAME"
@@ -109,15 +109,15 @@ else
   sudo mkdir -p  /root/.generated/vmfiles
 fi
 
-if [ "$IMAGE_NAME" == "centos8stream" ]; then
-  echo "Using community version"
+if [ "$IMAGE_NAME" == "centos9stream" ]; then
+  echo "Using community version (CentOS 9 Stream)"
 cat >/tmp/vm_vars.yaml<<EOF
 image: ${IMAGE_NAME}
 user: ${LOGIN_USER}
 user_password: ${PASSWORD}
 disk_size: ${DISK_SIZE} 
 numcpus: 4
-memory: 8184
+memory: 8192
 net_name: ${NET_NAME} 
 reservedns: ${DNS_FORWARDER}
 domainname: ${DOMAIN}
@@ -126,15 +126,15 @@ freeipa_dns: ${ip_address}
 EOF
   determine_command_yaml
   sudo python3 profile_generator/profile_generator.py $COMMAND  step-ca-server step-ca-server/template-centos.yaml --vars-file /tmp/vm_vars.yaml
-elif [ "$IMAGE_NAME" == "rhel8" ]; then
-  echo "Using RHEL version"
+elif [ "$IMAGE_NAME" == "rhel9" ]; then
+  echo "Using RHEL 9 version"
 cat >/tmp/vm_vars.yaml<<EOF
 image: ${IMAGE_NAME}
 user: ${LOGIN_USER}
 user_password: ${PASSWORD}
 disk_size: ${DISK_SIZE} 
 numcpus: 4
-memory: 8184
+memory: 8192
 net_name: ${NET_NAME} 
 reservedns: ${DNS_FORWARDER}
 domainname: ${DOMAIN}

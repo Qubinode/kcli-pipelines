@@ -52,7 +52,7 @@ function return_cloud_user() {
         mirror-registry|openshift-jumpbox)
             echo "fedora"
             ;;
-        microshift-demos|device-edge-workshops|ansible-aap|rhel9-pxe|rhel9-step-ca|rhel9|rhel8)
+        microshift-demos|device-edge-workshops|ansible-aap|rhel9-pxe|rhel9-step-ca|rhel9|rhel8|rhel10)
             echo "cloud-user"
             ;;
         *)

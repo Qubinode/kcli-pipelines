@@ -1,0 +1,311 @@
+---
+# VyOS Router Deployment Playbook
+# Part of Qubinode Base Infrastructure (FreeIPA + VyOS)
+#
+# This playbook handles:
+# 1. ISO download and placement in libvirt-accessible location
+# 2. Libvirt network creation
+# 3. VM creation with proper permissions
+# 4. Post-install configuration script preparation
+#
+# Usage:
+#   ansible-playbook deploy_vyos.yaml -e "action=create"
+#   ansible-playbook deploy_vyos.yaml -e "action=destroy"
+
+- name: Deploy VyOS Router
+  hosts: localhost
+  connection: local
+  become: yes
+  vars:
+    # VyOS Configuration - update version periodically
+    # Check https://vyos.net/get/nightly-builds/ for latest
+    vyos_version: "{{ lookup('env', 'VYOS_VERSION') | default('2025.11.24-0021-rolling', true) }}"
+    vyos_vm_name: "vyos-router"
+    vyos_ram_mb: 4096
+    vyos_vcpus: 2
+    vyos_disk_size_gb: 20
+    
+    # Paths
+    iso_download_path: "/root"
+    iso_libvirt_path: "/var/lib/libvirt/images"
+    iso_filename: "vyos-{{ vyos_version }}-generic-amd64.iso"
+    iso_url: "https://github.com/vyos/vyos-nightly-build/releases/download/{{ vyos_version }}/{{ iso_filename }}"
+    disk_path: "{{ iso_libvirt_path }}/{{ vyos_vm_name }}.qcow2"
+    
+    # Network configuration
+    vyos_networks:
+      - name: "1924"
+        bridge: "virbr4"
+        description: "Lab Network"
+      - name: "1925"
+        bridge: "virbr5"
+        description: "Disco Network"
+      - name: "1926"
+        bridge: "virbr6"
+        description: "Reserved"
+      - name: "1927"
+        bridge: "virbr7"
+        description: "Metal Network"
+      - name: "1928"
+        bridge: "virbr8"
+        description: "Provisioning Network"
+    
+    # Action: create or destroy
+    action: "{{ lookup('env', 'ACTION') | default('create', true) }}"
+    
+    # Domain from environment or default
+    domain: "{{ lookup('env', 'DOMAIN') | default('example.com', true) }}"
+
+  tasks:
+    # =========================================
+    # CREATE WORKFLOW
+    # =========================================
+    - name: Create workflow
+      when: action == "create"
+      block:
+        # --- Network Setup ---
+        - name: Create isolated libvirt networks
+          block:
+            - name: Check if network exists
+              command: virsh net-info {{ item.name }}
+              register: net_check
+              failed_when: false
+              changed_when: false
+              loop: "{{ vyos_networks }}"
+              loop_control:
+                label: "{{ item.name }}"
+
+            - name: Create network XML files
+              copy:
+                content: |
+                  <network>
+                    <name>{{ item.item.name }}</name>
+                    <bridge name='{{ item.item.bridge }}' stp='on' delay='0'/>
+                    <domain name='{{ item.item.name }}' localOnly='yes'/>
+                  </network>
+                dest: "/tmp/net-{{ item.item.name }}.xml"
+              when: item.rc != 0
+              loop: "{{ net_check.results }}"
+              loop_control:
+                label: "{{ item.item.name }}"
+
+            - name: Define networks
+              command: virsh net-define /tmp/net-{{ item.item.name }}.xml
+              when: item.rc != 0
+              loop: "{{ net_check.results }}"
+              loop_control:
+                label: "{{ item.item.name }}"
+
+            - name: Start networks
+              command: virsh net-start {{ item.item.name }}
+              when: item.rc != 0
+              loop: "{{ net_check.results }}"
+              loop_control:
+                label: "{{ item.item.name }}"
+              failed_when: false
+
+            - name: Set networks to autostart
+              command: virsh net-autostart {{ item.item.name }}
+              when: item.rc != 0
+              loop: "{{ net_check.results }}"
+              loop_control:
+                label: "{{ item.item.name }}"
+              failed_when: false
+
+        # --- ISO Download and Setup ---
+        - name: Download and prepare VyOS ISO
+          block:
+            - name: Check if ISO exists in libvirt images
+              stat:
+                path: "{{ iso_libvirt_path }}/{{ iso_filename }}"
+              register: iso_libvirt_stat
+
+            - name: Check if ISO exists in download path
+              stat:
+                path: "{{ iso_download_path }}/{{ iso_filename }}"
+              register: iso_download_stat
+              when: not iso_libvirt_stat.stat.exists
+
+            - name: Download VyOS ISO
+              get_url:
+                url: "{{ iso_url }}"
+                dest: "{{ iso_download_path }}/{{ iso_filename }}"
+                mode: '0644'
+                timeout: 600
+              when: 
+                - not iso_libvirt_stat.stat.exists
+                - not iso_download_stat.stat.exists | default(false)
+              register: iso_download
+
+            - name: Copy ISO to libvirt images directory
+              copy:
+                src: "{{ iso_download_path }}/{{ iso_filename }}"
+                dest: "{{ iso_libvirt_path }}/{{ iso_filename }}"
+                mode: '0644'
+                remote_src: yes
+              when: not iso_libvirt_stat.stat.exists
+
+            - name: Verify ISO size
+              stat:
+                path: "{{ iso_libvirt_path }}/{{ iso_filename }}"
+              register: iso_final_stat
+              failed_when: iso_final_stat.stat.size < 100000000
+
+            - name: Display ISO info
+              debug:
+                msg: "VyOS ISO ready: {{ iso_libvirt_path }}/{{ iso_filename }} ({{ (iso_final_stat.stat.size / 1024 / 1024) | int }} MB)"
+
+        # --- VM Creation ---
+        - name: Create VyOS VM
+          block:
+            - name: Check if VM already exists
+              command: virsh dominfo {{ vyos_vm_name }}
+              register: vm_check
+              failed_when: false
+              changed_when: false
+
+            - name: VM already exists
+              debug:
+                msg: "VM {{ vyos_vm_name }} already exists. Skipping creation."
+              when: vm_check.rc == 0
+
+            - name: Create VM disk image
+              command: >
+                qemu-img create -f qcow2 {{ disk_path }} {{ vyos_disk_size_gb }}G
+              when: vm_check.rc != 0
+              args:
+                creates: "{{ disk_path }}"
+
+            - name: Create VyOS VM with virt-install
+              command: >
+                virt-install
+                --name {{ vyos_vm_name }}
+                --ram {{ vyos_ram_mb }}
+                --vcpus {{ vyos_vcpus }}
+                --cdrom {{ iso_libvirt_path }}/{{ iso_filename }}
+                --os-variant debian10
+                --network network=default,model=e1000e
+                --network network=1924,model=e1000e
+                --network network=1925,model=e1000e
+                --network network=1926,model=e1000e
+                --network network=1927,model=e1000e
+                --network network=1928,model=e1000e
+                --graphics vnc
+                --disk path={{ disk_path }},bus=virtio
+                --noautoconsole
+              when: vm_check.rc != 0
+              register: vm_create
+
+            - name: Display VM creation result
+              debug:
+                msg: |
+                  ========================================
+                  VyOS VM Created Successfully
+                  ========================================
+                  
+                  MANUAL STEPS REQUIRED:
+                  
+                  1. Access VyOS console:
+                     virsh console {{ vyos_vm_name }}
+                  
+                  2. Login with default credentials:
+                     Username: vyos
+                     Password: vyos
+                  
+                  3. Install VyOS to disk:
+                     install image
+                  
+                  4. Reboot after installation:
+                     reboot
+                  
+                  5. After reboot, configure VyOS using the config script
+              when: vm_create is changed
+
+        # --- Configuration Script Preparation ---
+        - name: Prepare VyOS configuration script
+          block:
+            - name: Get FreeIPA IP address
+              command: kcli info vm freeipa
+              register: freeipa_info
+              failed_when: false
+              changed_when: false
+
+            - name: Parse FreeIPA IP
+              set_fact:
+                freeipa_ip: "{{ freeipa_info.stdout | regex_search('ip: ([0-9.]+)', '\\1') | first | default('1.1.1.1') }}"
+              when: freeipa_info.rc == 0
+
+            - name: Download VyOS config script
+              get_url:
+                url: "https://raw.githubusercontent.com/tosin2013/demo-virt/rhpds/demo.redhat.com/vyos-config-1.5.sh"
+                dest: "/root/vyos-config.sh"
+                mode: '0755'
+              register: config_download
+
+            - name: Update config script with FreeIPA IP
+              replace:
+                path: "/root/vyos-config.sh"
+                regexp: '1\.1\.1\.1'
+                replace: "{{ freeipa_ip | default('1.1.1.1') }}"
+              when: freeipa_ip is defined
+
+            - name: Update config script with domain
+              replace:
+                path: "/root/vyos-config.sh"
+                regexp: 'example\.com'
+                replace: "{{ domain }}"
+
+            - name: Display config script location
+              debug:
+                msg: |
+                  Configuration script ready: /root/vyos-config.sh
+                  FreeIPA IP: {{ freeipa_ip | default('Not detected') }}
+                  Domain: {{ domain }}
+                  
+                  After VyOS installation, run:
+                    scp /root/vyos-config.sh vyos@<VYOS_IP>:/tmp/
+                    ssh vyos@<VYOS_IP> 'vbash /tmp/vyos-config.sh'
+
+    # =========================================
+    # DESTROY WORKFLOW
+    # =========================================
+    - name: Destroy workflow
+      when: action == "destroy"
+      block:
+        - name: Check if VM exists
+          command: virsh dominfo {{ vyos_vm_name }}
+          register: vm_exists
+          failed_when: false
+          changed_when: false
+
+        - name: Stop VM if running
+          command: virsh destroy {{ vyos_vm_name }}
+          when: vm_exists.rc == 0
+          failed_when: false
+
+        - name: Undefine VM
+          command: virsh undefine {{ vyos_vm_name }} --remove-all-storage
+          when: vm_exists.rc == 0
+          failed_when: false
+
+        - name: Remove disk image
+          file:
+            path: "{{ disk_path }}"
+            state: absent
+
+        - name: Display destroy result
+          debug:
+            msg: |
+              VyOS Router destroyed.
+              Networks (1924-1928) preserved for other VMs.
+              To remove networks:
+                for NET in 1924 1925 1926 1927 1928; do
+                  virsh net-destroy $NET
+                  virsh net-undefine $NET
+                done
+
+  handlers:
+    - name: Restart libvirtd
+      service:
+        name: libvirtd
+        state: restarted

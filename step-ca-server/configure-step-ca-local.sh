@@ -1,79 +1,178 @@
 #!/bin/bash
-# https://ypbind.de/maus/notes/real_life_step-ca_with_multiple_users/
+# Step-CA Local Configuration Script
+# https://smallstep.com/docs/step-ca
+# 
+# Usage: ./configure-step-ca-local.sh <domain> <dns_ip>
+#
+# This script:
+# 1. Installs Step CLI and Step CA
+# 2. Initializes the Certificate Authority
+# 3. Adds ACME provisioner for automated certificate issuance
+# 4. Configures systemd service
+# 5. Updates DNS settings
+
 export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
 set -x
 
 function check_dependencies() {
-    required_cmds="curl wget jq ansible-galaxy nohup nmcli"
+    echo "[INFO] Checking dependencies..."
+    required_cmds="curl wget jq nmcli"
+    missing_cmds=""
+    
     for cmd in $required_cmds; do
         if ! command -v $cmd &> /dev/null; then
-            echo "$cmd is not installed. Exiting."
-            exit 1
+            missing_cmds="$missing_cmds $cmd"
         fi
     done
+    
+    if [ -n "$missing_cmds" ]; then
+        echo "[INFO] Installing missing dependencies:$missing_cmds"
+        sudo dnf install -y $missing_cmds
+    fi
+    
+    echo "[OK] Dependencies check complete"
 }
 
-function install_cli_tools() {
-    if ! command -v oc &> /dev/null; then
-        echo "oc command not found. Installing OpenShift CLI..."
-        curl -o /tmp/configure-openshift-packages.sh -L https://raw.githubusercontent.com/tosin2013/openshift-4-deployment-notes/master/pre-steps/configure-openshift-packages.sh
-        chmod +x /tmp/configure-openshift-packages.sh && /tmp/configure-openshift-packages.sh -i
+function install_step_tools() {
+    echo "[INFO] Installing Step CLI and Step CA..."
+    
+    # Install Step CLI
+    if ! command -v step &> /dev/null; then
+        echo "[INFO] Installing Step CLI..."
+        wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm -O /tmp/step-cli_amd64.rpm
+        sudo rpm -i /tmp/step-cli_amd64.rpm || sudo rpm -U /tmp/step-cli_amd64.rpm
+    else
+        echo "[OK] Step CLI already installed"
     fi
+    
+    # Install Step CA
+    if ! command -v step-ca &> /dev/null; then
+        echo "[INFO] Installing Step CA..."
+        wget -q https://dl.smallstep.com/certificates/docs-ca-install/latest/step-ca_amd64.rpm -O /tmp/step-ca_amd64.rpm
+        sudo rpm -i /tmp/step-ca_amd64.rpm || sudo rpm -U /tmp/step-ca_amd64.rpm
+    else
+        echo "[OK] Step CA already installed"
+    fi
+    
+    # Verify installation
+    step version
+    step-ca version
+    
+    echo "[OK] Step tools installed"
 }
 
 function setup_certificate_authority() {
-    wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm && sudo rpm -i step-cli_amd64.rpm
-    wget -q https://dl.smallstep.com/certificates/docs-ca-install/latest/step-ca_amd64.rpm && sudo rpm -i step-ca_amd64.rpm
-    ansible-galaxy collection install maxhoesel.smallstep>=0.25.2
-    sudo hostnamectl set-hostname step-ca-server.${DOMAIN}
-
-    step ca init  --dns=step-ca-server.${DOMAIN} --address='[::]:443'  \
-    --address=0.0.0.0:443  --name="Certificate authority for internal.${DOMAIN}" \
-    --deployment-type=standalone --provisioner="root@internal.${DOMAIN} " --password-file=/etc/step/initial_password
-
+    echo "[INFO] Setting up Certificate Authority..."
     
-    step ca provisioner add acme --type ACME
-
+    # Set hostname
+    sudo hostnamectl set-hostname step-ca-server.${DOMAIN}
+    
+    # Check if CA is already initialized
+    if [ -f "${HOME}/.step/config/ca.json" ]; then
+        echo "[INFO] CA already initialized, skipping init"
+    else
+        echo "[INFO] Initializing CA..."
+        step ca init \
+            --dns=step-ca-server.${DOMAIN} \
+            --dns=localhost \
+            --dns=127.0.0.1 \
+            --address=0.0.0.0:443 \
+            --name="Internal CA for ${DOMAIN}" \
+            --deployment-type=standalone \
+            --provisioner="admin@${DOMAIN}" \
+            --password-file=/etc/step/initial_password
+    fi
+    
+    # Add ACME provisioner if not exists
+    if ! step ca provisioner list 2>/dev/null | grep -q "acme"; then
+        echo "[INFO] Adding ACME provisioner..."
+        step ca provisioner add acme --type ACME
+    else
+        echo "[OK] ACME provisioner already exists"
+    fi
+    
+    # Configure and start systemd service
+    echo "[INFO] Configuring systemd service..."
     cd /tmp
     curl -OL https://raw.githubusercontent.com/tosin2013/kcli-pipelines/main/step-ca-server/step-ca-service.sh
     chmod +x step-ca-service.sh
-    ./step-ca-service.sh
-
-    #nohup step-ca $(step path)/config/ca.json --password-file=/etc/step/initial_password > step-ca.log 2>&1 &
-    #cat step-ca.log
-    #echo "step-ca $(step path)/config/ca.json"
+    sudo ./step-ca-service.sh
+    
+    # Wait for service to start
+    sleep 5
+    
+    # Verify CA is running
+    if curl -sk https://localhost:443/health | grep -q "ok"; then
+        echo "[OK] Step CA is running and healthy"
+    else
+        echo "[WARN] Step CA health check failed - check logs: journalctl -u step-ca"
+    fi
+    
+    # Display CA information
+    echo ""
+    echo "========================================"
+    echo "Certificate Authority Information"
+    echo "========================================"
+    echo "CA URL: https://step-ca-server.${DOMAIN}:443"
+    echo "Root CA: $(step path)/certs/root_ca.crt"
+    echo "Fingerprint: $(step certificate fingerprint $(step path)/certs/root_ca.crt)"
+    echo ""
+    echo "Provisioners:"
+    step ca provisioner list 2>/dev/null || echo "  (service may still be starting)"
+    echo "========================================"
 }
 
 function update_dns_settings() {
-    local interface_name="System eth0"
-    sudo nmcli connection modify "${interface_name}" ipv4.dns "$DNS_IP,1.1.1.1"
-    sudo nmcli connection down "${interface_name}" && sudo nmcli connection up "${interface_name}"
-    sudo nmcli connection show "${interface_name}" | grep ipv4.dns
+    echo "[INFO] Updating DNS settings..."
+    
+    # Find the active connection
+    CONN=$(nmcli -t -f NAME connection show --active | head -1)
+    
+    if [ -n "$CONN" ]; then
+        echo "[INFO] Configuring DNS on connection: $CONN"
+        sudo nmcli connection modify "$CONN" ipv4.dns "${DNS_IP},1.1.1.1"
+        sudo nmcli connection down "$CONN" && sudo nmcli connection up "$CONN"
+        echo "[OK] DNS configured"
+    else
+        echo "[WARN] No active connection found, skipping DNS configuration"
+    fi
 }
 
 function main() {
     if [ $# -ne 2 ]; then
-        echo "Please pass domain name and DNS IP address as arguments"
         echo "Usage: $0 <domain> <dns_ip>"
+        echo "Example: $0 example.com 192.168.122.161"
         exit 1
     fi
 
     DOMAIN=$1
     DNS_IP=$2
+    
+    echo "========================================"
+    echo "Step-CA Configuration"
+    echo "========================================"
+    echo "Domain: ${DOMAIN}"
+    echo "DNS Server: ${DNS_IP}"
+    echo "========================================"
 
-    mkdir -p /etc/step
+    # Setup password file
+    sudo mkdir -p /etc/step
     if [ -f /tmp/initial_password ]; then
-        cp /tmp/initial_password /etc/step/
+        sudo cp /tmp/initial_password /etc/step/
+        sudo chmod 600 /etc/step/initial_password
     else
-        echo -n "Enter a password for the root provisioner: "
-        read -s password
-        echo "$password" > /etc/step/initial_password
+        echo "[ERROR] /tmp/initial_password not found"
+        echo "Please create the password file first"
+        exit 1
     fi
 
     check_dependencies
-    install_cli_tools
+    install_step_tools
     setup_certificate_authority
     update_dns_settings
+    
+    echo ""
+    echo "[OK] Step-CA configuration complete!"
 }
 
 main "$@"
