@@ -48,7 +48,10 @@ dag = DAG(
         'cert_mode': 'step-ca',  # step-ca or self-signed
         'domain': 'example.com',  # Domain for certificates
         'target_server': 'localhost',  # Target server
-        'network': 'qubinet',  # Network to deploy on
+        'network': 'default',  # Primary network (DHCP for management)
+        'isolated_network': '1924',  # Isolated network for disconnected OCP
+        'isolated_ip': '192.168.49.30',  # Static IP on isolated network
+        'isolated_gateway': '192.168.49.1',  # Gateway for isolated network
         'step_ca_vm': 'step-ca-server',  # Step-CA server VM name (for step-ca mode)
     },
     doc_md="""
@@ -305,12 +308,16 @@ create_jfrog = BashOperator(
     CERT_MODE="{{ params.cert_mode }}"
     DOMAIN="{{ params.domain }}"
     NETWORK="{{ params.network }}"
+    ISOLATED_NETWORK="{{ params.isolated_network }}"
+    ISOLATED_IP="{{ params.isolated_ip }}"
+    ISOLATED_GATEWAY="{{ params.isolated_gateway }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
     
     echo "VM Name: $VM_NAME"
     echo "JFrog Version: $JFROG_VERSION"
     echo "JFrog Edition: $JFROG_EDITION"
     echo "Certificate Mode: $CERT_MODE"
+    echo "Dual-NIC: $NETWORK (mgmt) + $ISOLATED_NETWORK ($ISOLATED_IP)"
     
     # Check if VM already exists
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
@@ -336,7 +343,7 @@ create_jfrog = BashOperator(
             echo "Step-CA URL: $CA_URL"
             echo "CA Fingerprint: $FINGERPRINT"
             
-            # Create JFrog with Step-CA
+            # Create JFrog with Step-CA and dual-NIC
             ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
                 "export VM_NAME=$VM_NAME && \
                  export JFROG_VERSION=$JFROG_VERSION && \
@@ -345,6 +352,10 @@ create_jfrog = BashOperator(
                  export CA_URL=$CA_URL && \
                  export FINGERPRINT=$FINGERPRINT && \
                  export NET_NAME=$NETWORK && \
+                 export DOMAIN=$DOMAIN && \
+                 export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
+                 export ISOLATED_IP=$ISOLATED_IP && \
+                 export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
                  cd /opt/kcli-pipelines && \
                  ./jfrog/deploy.sh create"
         else
@@ -354,13 +365,17 @@ create_jfrog = BashOperator(
     fi
     
     if [ "$CERT_MODE" == "self-signed" ]; then
-        # Create JFrog with self-signed certs
+        # Create JFrog with self-signed certs and dual-NIC
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "export VM_NAME=$VM_NAME && \
              export JFROG_VERSION=$JFROG_VERSION && \
              export JFROG_EDITION=$JFROG_EDITION && \
              export CERT_MODE=self-signed && \
              export NET_NAME=$NETWORK && \
+             export DOMAIN=$DOMAIN && \
+             export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
+             export ISOLATED_IP=$ISOLATED_IP && \
+             export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
              cd /opt/kcli-pipelines && \
              ./jfrog/deploy.sh create"
     fi
@@ -619,10 +634,83 @@ check_status = BashOperator(
 )
 
 
+# DNS Registration task - registers the VM hostname in FreeIPA
+register_dns = BashOperator(
+    task_id='register_dns',
+    bash_command='''
+    export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
+    echo "========================================"
+    echo "Registering DNS in FreeIPA"
+    echo "========================================"
+    
+    VM_NAME="{{ params.vm_name }}"
+    DOMAIN="{{ params.domain }}"
+    
+    # Get VM IP
+    IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "kcli info vm $VM_NAME 2>/dev/null | grep 'ip:' | awk '{print \\$2}' | head -1")
+    
+    if [ -z "$IP" ]; then
+        echo "[WARN] Could not get VM IP - skipping DNS registration"
+        exit 0
+    fi
+    
+    echo "Hostname: $VM_NAME"
+    echo "IP: $IP"
+    echo "Domain: $DOMAIN"
+    
+    # Get FreeIPA IP
+    FREEIPA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "kcli info vm freeipa 2>/dev/null | grep 'ip:' | awk '{print \\$2}' | head -1")
+    
+    if [ -z "$FREEIPA_IP" ]; then
+        echo "[WARN] FreeIPA not found - skipping DNS registration"
+        exit 0
+    fi
+    
+    echo "FreeIPA IP: $FREEIPA_IP"
+    echo ""
+    
+    # Add DNS record using LDAP EXTERNAL auth
+    echo "[INFO] Adding DNS A record via LDAP..."
+    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF
+ldapadd -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
+dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
+objectClass: idnsrecord
+objectClass: top
+idnsname: ${VM_NAME}
+arecord: ${IP}
+LDIF
+
+ldapmodify -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
+dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
+changetype: modify
+replace: arecord
+arecord: ${IP}
+LDIF
+EOF
+    
+    echo ""
+    echo "[INFO] Verifying DNS..."
+    sleep 2
+    RESOLVED=$(ssh -o StrictHostKeyChecking=no root@localhost \
+        "dig +short ${VM_NAME}.${DOMAIN} @${FREEIPA_IP}" 2>/dev/null || true)
+    
+    if [ "$RESOLVED" = "$IP" ]; then
+        echo "[OK] DNS verified: ${VM_NAME}.${DOMAIN} -> ${RESOLVED}"
+    else
+        echo "[INFO] DNS may need time to propagate"
+    fi
+    ''',
+    execution_timeout=timedelta(minutes=5),
+    dag=dag,
+)
+
+
 # Define task dependencies
 # Main create flow
 decide_action_task >> check_prerequisites >> validate_environment >> create_jfrog
-create_jfrog >> wait_for_jfrog >> validate_jfrog_health >> deployment_complete
+create_jfrog >> register_dns >> wait_for_jfrog >> validate_jfrog_health >> deployment_complete
 
 # Alternative flows
 decide_action_task >> delete_jfrog

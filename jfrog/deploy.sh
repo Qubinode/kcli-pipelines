@@ -101,7 +101,7 @@ function check_prerequisites() {
     echo "[OK] kcli available"
     
     # Check for RHEL9 image
-    IMAGE="rhel9"
+    IMAGE="centos9stream"
     if ! kcli list image | grep -q "$IMAGE"; then
         echo "[WARN] Image $IMAGE not found"
         echo "Download with: kcli download image $IMAGE"
@@ -118,8 +118,8 @@ function check_prerequisites() {
                 echo "[INFO] Found Step-CA server at ${STEP_CA_IP}"
                 CA_URL="${CA_URL:-https://${STEP_CA_IP}:443}"
                 if [ -z "${FINGERPRINT:-}" ]; then
-                    FINGERPRINT=$(ssh -o StrictHostKeyChecking=no cloud-user@${STEP_CA_IP} \
-                        "sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null" || true)
+                    FINGERPRINT=$(ssh -o StrictHostKeyChecking=no root@${STEP_CA_IP} \
+                        "step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null" || true)
                 fi
                 echo "[OK] CA_URL: ${CA_URL}"
                 echo "[OK] Fingerprint: ${FINGERPRINT:-NOT_FOUND}"
@@ -144,7 +144,7 @@ function create_jfrog() {
         return 0
     fi
     
-    IMAGE="rhel9"
+    IMAGE="centos9stream"
     LOGIN_USER="cloud-user"
     
     # Get FreeIPA DNS IP
@@ -170,15 +170,14 @@ function create_jfrog() {
         NETS_CONFIG="[{\"name\": \"${NET_NAME}\"}]"
     fi
     
-    # Create VM using kcli with dual-NIC support
+    # Create VM using kcli with dual-NIC support (minimal cmds - install packages after DNS fix)
     kcli create vm "${VM_NAME}" \
         -i "${IMAGE}" \
         -P numcpus=4 \
         -P memory=8192 \
         -P disks="[300]" \
         -P nets="${NETS_CONFIG}" \
-        -P dns="${FREEIPA_IP}" \
-        -P cmds="[\"echo ${PASSWORD} | passwd --stdin root\", \"dnf install -y curl wget git jq podman java-11-openjdk-headless\"]" \
+        -P cmds="[\"echo ${PASSWORD} | passwd --stdin root\"]" \
         --wait
     
     # Wait for VM to get IP
@@ -207,6 +206,22 @@ function create_jfrog() {
         echo "[INFO] Waiting for SSH... (${ATTEMPT}/${MAX_ATTEMPTS})"
         sleep 10
     done
+    
+    # Fix DNS to use external resolvers (avoid FreeIPA search domain issues)
+    echo "[INFO] Configuring DNS resolvers..."
+    ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<'DNSEOF'
+cat > /etc/resolv.conf <<EOF
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+EOF
+echo "[OK] DNS configured"
+DNSEOF
+    
+    # Install required packages
+    echo "[INFO] Installing required packages..."
+    ssh -o StrictHostKeyChecking=no root@${IP} \
+        "dnf install -y curl wget git jq podman java-11-openjdk-headless firewalld" || \
+        echo "[WARN] Some packages may have failed to install"
     
     # Configure second NIC if dual-NIC mode
     if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
@@ -273,6 +288,7 @@ EOF
         echo "[INFO] Configuring Step-CA certificates..."
         STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
         
+        # Install step CLI and bootstrap on JFrog VM
         ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<EOF
 # Install step CLI
 wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm -O /tmp/step-cli.rpm
@@ -281,14 +297,24 @@ rpm -i /tmp/step-cli.rpm || rpm -U /tmp/step-cli.rpm || true
 # Bootstrap step-ca
 step ca bootstrap --ca-url ${CA_URL} --fingerprint ${FINGERPRINT} --install
 
-# Get certificate
-TOKEN=\$(ssh -o StrictHostKeyChecking=no cloud-user@${STEP_CA_IP} \
-    'sudo step ca token jfrog.${DOMAIN} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner admin@example.com' | tail -1)
-
-step ca certificate jfrog.${DOMAIN} /opt/jfrog/certs/jfrog.crt /opt/jfrog/certs/jfrog.key --ca-url ${CA_URL} --token "\$TOKEN" --force
-
-echo "[OK] Step-CA certificates configured"
+# Create certs directory
+mkdir -p /opt/jfrog/certs
 EOF
+        
+        # Get certificate token from hypervisor (has SSH access to Step-CA)
+        echo "[INFO] Requesting certificate token from Step-CA..."
+        TOKEN=$(ssh -o StrictHostKeyChecking=no root@${STEP_CA_IP} \
+            "step ca token jfrog.${DOMAIN} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner admin@example.com" | tail -1)
+        
+        if [ -z "$TOKEN" ]; then
+            echo "[WARN] Failed to get certificate token from Step-CA"
+        else
+            # Request certificate on JFrog VM using the token
+            echo "[INFO] Requesting certificate on JFrog VM..."
+            ssh -o StrictHostKeyChecking=no root@${IP} \
+                "step ca certificate jfrog.${DOMAIN} /opt/jfrog/certs/jfrog.crt /opt/jfrog/certs/jfrog.key --ca-url ${CA_URL} --token '${TOKEN}' --force && \
+                 echo '[OK] Step-CA certificates configured'"
+        fi
     fi
     
     echo ""
