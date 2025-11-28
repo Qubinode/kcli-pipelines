@@ -245,17 +245,44 @@ request_certificate = BashOperator(
         done
     fi
     
-    # Request certificate on host
+    # Get Step-CA VM IP from CA URL
+    STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
+    echo "Step-CA IP: $STEP_CA_IP"
+    
+    # Create a script on the host and execute it
+    echo "[INFO] Requesting certificate via token..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "mkdir -p ${OUTPUT_PATH} && \
-         step ca certificate ${COMMON_NAME} \
-           ${OUTPUT_PATH}/${COMMON_NAME}.crt \
-           ${OUTPUT_PATH}/${COMMON_NAME}.key \
-           --ca-url ${CA_URL} \
-           --provisioner ${PROVISIONER} \
-           --not-after ${DURATION} \
-           ${SAN_ARGS} \
-           --force"
+        "cat > /tmp/request_cert.sh << 'SCRIPT'
+#!/bin/bash
+set -e
+STEP_CA_IP=\"\$1\"
+CA_URL=\"\$2\"
+COMMON_NAME=\"\$3\"
+OUTPUT_PATH=\"\$4\"
+SAN_ARGS=\"\$5\"
+
+echo \"[INFO] Getting certificate token from CA...\"
+TOKEN=\$(ssh -o StrictHostKeyChecking=no cloud-user@\${STEP_CA_IP} \\
+    \"sudo step ca token \${COMMON_NAME} --ca-url https://localhost:443 \\
+     --password-file /etc/step/initial_password --provisioner 'admin@example.com'\" 2>/dev/null | tail -1)
+
+if [ -z \"\$TOKEN\" ]; then
+    echo \"[ERROR] Failed to get certificate token\"
+    exit 1
+fi
+echo \"[OK] Got certificate token\"
+
+mkdir -p \${OUTPUT_PATH}
+step ca certificate \${COMMON_NAME} \\
+    \${OUTPUT_PATH}/\${COMMON_NAME}.crt \\
+    \${OUTPUT_PATH}/\${COMMON_NAME}.key \\
+    --ca-url \${CA_URL} \\
+    --token \"\$TOKEN\" \\
+    \${SAN_ARGS} \\
+    --force
+SCRIPT
+chmod +x /tmp/request_cert.sh
+/tmp/request_cert.sh '${STEP_CA_IP}' '${CA_URL}' '${COMMON_NAME}' '${OUTPUT_PATH}' '${SAN_ARGS}'"
     
     if [ $? -eq 0 ]; then
         echo ""
