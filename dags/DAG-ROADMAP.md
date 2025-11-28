@@ -10,9 +10,10 @@ This document outlines the Airflow DAGs for kcli-pipelines, following ADR-0047 (
 +------------------------------------------------------------------+
 |                    Base Infrastructure DAGs                       |
 +------------------------------------------------------------------+
-| freeipa_deployment.py     | DNS/Identity Management (TESTED)     |
-| vyos_router_deployment.py | Network Router (TESTED)              |
-| step_ca_deployment.py     | Certificate Authority (PLANNED)      |
+| freeipa_deployment.py       | DNS/Identity Management (TESTED)   |
+| freeipa_dns_management.py   | DNS Record Management (TESTED)     |
+| vyos_router_deployment.py   | Network Router (TESTED)            |
+| step_ca_deployment.py       | Certificate Authority (TESTED)     |
 +------------------------------------------------------------------+
 
 +------------------------------------------------------------------+

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 # Configuration
 KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
@@ -606,10 +607,85 @@ check_status = BashOperator(
 )
 
 
+# DNS Registration task - registers the VM hostname in FreeIPA
+register_dns = BashOperator(
+    task_id='register_dns',
+    bash_command='''
+    export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
+    echo "========================================"
+    echo "Registering DNS in FreeIPA"
+    echo "========================================"
+    
+    VM_NAME="{{ params.vm_name }}"
+    DOMAIN="{{ params.domain }}"
+    
+    # Get VM IP
+    IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "kcli info vm $VM_NAME 2>/dev/null | grep 'ip:' | awk '{print \\$2}' | head -1")
+    
+    if [ -z "$IP" ]; then
+        echo "[WARN] Could not get VM IP - skipping DNS registration"
+        exit 0
+    fi
+    
+    echo "Hostname: $VM_NAME"
+    echo "IP: $IP"
+    echo "Domain: $DOMAIN"
+    
+    # Get FreeIPA IP
+    FREEIPA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "kcli info vm freeipa 2>/dev/null | grep 'ip:' | awk '{print \\$2}' | head -1")
+    
+    if [ -z "$FREEIPA_IP" ]; then
+        echo "[WARN] FreeIPA not found - skipping DNS registration"
+        exit 0
+    fi
+    
+    echo "FreeIPA IP: $FREEIPA_IP"
+    echo ""
+    
+    # Add DNS record using LDAP EXTERNAL auth (via FreeIPA server)
+    echo "[INFO] Adding DNS A record via LDAP..."
+    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF
+# Add DNS A record using EXTERNAL SASL auth (root access)
+ldapadd -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
+dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
+objectClass: idnsrecord
+objectClass: top
+idnsname: ${VM_NAME}
+arecord: ${IP}
+LDIF
+
+# If record exists, modify it
+ldapmodify -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
+dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
+changetype: modify
+replace: arecord
+arecord: ${IP}
+LDIF
+EOF
+    
+    echo ""
+    echo "[INFO] Verifying DNS..."
+    sleep 2
+    RESOLVED=$(ssh -o StrictHostKeyChecking=no root@localhost \
+        "dig +short ${VM_NAME}.${DOMAIN} @${FREEIPA_IP}" 2>/dev/null || true)
+    
+    if [ "$RESOLVED" = "$IP" ]; then
+        echo "[OK] DNS verified: ${VM_NAME}.${DOMAIN} -> ${RESOLVED}"
+    else
+        echo "[INFO] DNS may need time to propagate"
+    fi
+    ''',
+    execution_timeout=timedelta(minutes=5),
+    dag=dag,
+)
+
+
 # Define task dependencies
 # Main create flow
 decide_action_task >> check_step_ca >> validate_environment >> create_registry
-create_registry >> wait_for_registry >> validate_registry_health >> deployment_complete
+create_registry >> register_dns >> wait_for_registry >> validate_registry_health >> deployment_complete
 
 # Alternative flows
 decide_action_task >> delete_registry
