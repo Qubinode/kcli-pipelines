@@ -348,8 +348,10 @@ create_registry = BashOperator(
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
          export QUAY_VERSION=$QUAY_VERSION && \
+         export DOMAIN=$DOMAIN && \
          export CA_URL=$CA_URL && \
          export FINGERPRINT=$FINGERPRINT && \
+         export PASSWORD=password && \
          export STEP_CA_PASSWORD=password && \
          export NET_NAME=$NETWORK && \
          export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \

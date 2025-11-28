@@ -28,6 +28,7 @@ export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
 # Preserve environment variables passed from caller BEFORE sourcing defaults
 _PASSED_NET_NAME="${NET_NAME:-}"
 _PASSED_DOMAIN="${DOMAIN:-}"
+_PASSED_PASSWORD="${PASSWORD:-}"
 _PASSED_ISOLATED_NET="${ISOLATED_NET_NAME:-}"
 _PASSED_ISOLATED_IP="${ISOLATED_IP:-}"
 _PASSED_ISOLATED_GW="${ISOLATED_GATEWAY:-}"
@@ -35,7 +36,8 @@ _PASSED_ISOLATED_GW="${ISOLATED_GATEWAY:-}"
 # Default values
 ACTION="${1:-create}"
 VM_NAME="${VM_NAME:-mirror-registry}"
-QUAY_VERSION="${QUAY_VERSION:-v1.3.11}"
+# Use latest stable version (v2.0.3 as of Nov 2025)
+QUAY_VERSION="${QUAY_VERSION:-v2.0.3}"
 
 # Source environment
 if [ -f /opt/kcli-pipelines/helper_scripts/default.env ]; then
@@ -47,13 +49,6 @@ else
     exit 1
 fi
 
-# Restore passed environment variables (override defaults)
-[ -n "$_PASSED_NET_NAME" ] && NET_NAME="$_PASSED_NET_NAME"
-[ -n "$_PASSED_DOMAIN" ] && DOMAIN="$_PASSED_DOMAIN"
-[ -n "$_PASSED_ISOLATED_NET" ] && ISOLATED_NET_NAME="$_PASSED_ISOLATED_NET"
-[ -n "$_PASSED_ISOLATED_IP" ] && ISOLATED_IP="$_PASSED_ISOLATED_IP"
-[ -n "$_PASSED_ISOLATED_GW" ] && ISOLATED_GATEWAY="$_PASSED_ISOLATED_GW"
-
 # Source helper functions if available
 if [ -f /opt/kcli-pipelines/helper_scripts/helper_functions.sh ]; then
     source /opt/kcli-pipelines/helper_scripts/helper_functions.sh
@@ -61,14 +56,27 @@ elif [ -f helper_scripts/helper_functions.sh ]; then
     source helper_scripts/helper_functions.sh
 fi
 
+# Restore passed environment variables AFTER sourcing (they take priority)
+[ -n "$_PASSED_NET_NAME" ] && NET_NAME="$_PASSED_NET_NAME"
+[ -n "$_PASSED_DOMAIN" ] && DOMAIN="$_PASSED_DOMAIN"
+[ -n "$_PASSED_PASSWORD" ] && PASSWORD="$_PASSED_PASSWORD"
+[ -n "$_PASSED_ISOLATED_NET" ] && ISOLATED_NET_NAME="$_PASSED_ISOLATED_NET"
+[ -n "$_PASSED_ISOLATED_IP" ] && ISOLATED_IP="$_PASSED_ISOLATED_IP"
+[ -n "$_PASSED_ISOLATED_GW" ] && ISOLATED_GATEWAY="$_PASSED_ISOLATED_GW"
+
 # Set defaults for networks
 NET_NAME="${NET_NAME:-default}"
 ISOLATED_NET_NAME="${ISOLATED_NET_NAME:-}"
 ISOLATED_IP="${ISOLATED_IP:-}"
 ISOLATED_GATEWAY="${ISOLATED_GATEWAY:-192.168.49.1}"
 
-# Get domain from ansible variables
-DOMAIN=$(yq eval '.domain' "${ANSIBLE_ALL_VARIABLES}" 2>/dev/null || echo "example.com")
+# Get domain from ansible variables ONLY if not already set
+if [ -z "$DOMAIN" ]; then
+    DOMAIN=$(yq eval '.domain' "${ANSIBLE_ALL_VARIABLES}" 2>/dev/null || echo "example.com")
+fi
+
+# Set password default
+PASSWORD="${PASSWORD:-password}"
 
 echo "========================================"
 echo "Mirror-Registry Deployment"
@@ -95,13 +103,13 @@ function check_prerequisites() {
     fi
     echo "[OK] kcli available"
     
-    # Check for RHEL image
-    IMAGE="rhel8"
+    # Check for CentOS Stream image (doesn't require subscription like RHEL)
+    IMAGE="centos9stream"
     if ! kcli list image | grep -q "$IMAGE"; then
         echo "[WARN] Image $IMAGE not found"
         echo "Download with: kcli download image $IMAGE"
     else
-        echo "[OK] RHEL8 image available"
+        echo "[OK] CentOS 9 Stream image available"
     fi
     
     # Check Step-CA server
@@ -138,7 +146,8 @@ function create_mirror_registry() {
         return 0
     fi
     
-    IMAGE="rhel8"
+    # Use CentOS Stream 9 (doesn't require subscription like RHEL)
+    IMAGE="centos9stream"
     LOGIN_USER="cloud-user"
     
     # Get FreeIPA DNS IP
@@ -156,8 +165,10 @@ function create_mirror_registry() {
         CA_URL="https://${STEP_CA_IP}:443"
     fi
     
-    # Get password from vault or use default
-    PASSWORD=$(yq eval '.admin_user_password' "${ANSIBLE_VAULT_FILE}" 2>/dev/null || echo "password")
+    # Get password from vault or use default (only if not already set)
+    if [ -z "$PASSWORD" ]; then
+        PASSWORD=$(yq eval '.admin_user_password' "${ANSIBLE_VAULT_FILE}" 2>/dev/null || echo "password")
+    fi
     STEP_CA_PASSWORD="${STEP_CA_PASSWORD:-password}"
     
     echo "[INFO] Creating VM ${VM_NAME}..."
