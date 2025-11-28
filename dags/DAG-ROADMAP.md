@@ -276,7 +276,7 @@ The Step-CA DAG is critical for disconnected installs:
 | vyos_router_deployment.py | ✅ TESTED | 2025-11-27 | Working |
 | generic_vm_deployment.py | ✅ TESTED | 2025-11-28 | Working - deployed test-rhel9 VM |
 | step_ca_deployment.py | ✅ TESTED | 2025-11-28 | Working - deployed step-ca-server VM |
-| step_ca_operations.py | 🔨 NOT TESTED | - | Certificate operations utility |
+| step_ca_operations.py | ✅ TESTED | 2025-11-28 | Certificate operations - provides instructions |
 | jumpserver_deployment.py | 🔨 PLANNED | - | Priority 3 |
 | ocp_agent_installer.py | ⚠️ NOT TESTED | - | From OneDev |
 | ocp_baremetal_internal.py | ⚠️ NOT TESTED | - | From OneDev |
