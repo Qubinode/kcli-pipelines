@@ -156,21 +156,7 @@ configure_network = BashOperator(
     
     # Find and configure the second NIC (handles Fedora ens naming)
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "ssh -o StrictHostKeyChecking=no fedora@${IP} '
-            SECOND_NIC=\\$(ip link | grep -E \"ens4|eth1|enp0s4\" | head -1 | awk -F: \"{print \\\\\\$2}\" | tr -d \" \")
-            if [ -n \"\\$SECOND_NIC\" ]; then
-                # Check if already configured
-                if ! ip addr show \\$SECOND_NIC | grep -q \"${STATIC_IP}\"; then
-                    sudo nmcli con add type ethernet con-name isolated ifname \\$SECOND_NIC ip4 ${STATIC_IP}/24 gw4 ${GATEWAY}
-                    sudo nmcli con up isolated
-                    echo \"[OK] Configured \\$SECOND_NIC with IP ${STATIC_IP}\"
-                else
-                    echo \"[OK] \\$SECOND_NIC already configured with ${STATIC_IP}\"
-                fi
-            else
-                echo \"[WARN] Second NIC not found\"
-            fi
-        '"
+        "ssh -o StrictHostKeyChecking=no fedora@${IP} 'SECOND_NIC=\$(ip -o link show | awk -F\": \" \"{print \\\$2}\" | grep -v lo | tail -1); if [ -n \"\$SECOND_NIC\" ]; then if ! ip addr show \$SECOND_NIC | grep -q ${STATIC_IP}; then sudo nmcli con add type ethernet con-name isolated ifname \$SECOND_NIC ip4 ${STATIC_IP}/24 gw4 ${GATEWAY} && sudo nmcli con up isolated && echo OK; else echo Already configured; fi; else echo No second NIC; fi'"
     
     echo "[OK] Network configuration complete"
     ''',

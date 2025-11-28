@@ -31,12 +31,18 @@ cmds:
   - echo "{{ user }} ALL=(root) NOPASSWD:ALL" | tee -a /etc/sudoers.d/{{ user }}
   - echo {{ user_password }} | passwd --stdin {{ user }}
 {% if isolated_net_name and isolated_ip %}
-  # Configure second NIC for isolated network (handles ens naming on Fedora)
+  # Configure second NIC for isolated network (handles ens/eth/enp naming)
   - |
-    SECOND_NIC=$(ip link | grep -E "ens4|eth1|enp0s4" | head -1 | awk -F: '{print $2}' | tr -d ' ')
+    # Wait for network interfaces to be available
+    sleep 5
+    # Find second NIC - look for interface that's not lo and not the primary
+    SECOND_NIC=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | tail -1)
     if [ -n "$SECOND_NIC" ]; then
-      nmcli con add type ethernet con-name isolated ifname $SECOND_NIC ip4 {{ isolated_ip }}/24 gw4 {{ isolated_gateway }}
-      nmcli con up isolated
+      echo "Configuring $SECOND_NIC with IP {{ isolated_ip }}"
+      nmcli con add type ethernet con-name isolated ifname $SECOND_NIC ip4 {{ isolated_ip }}/24 gw4 {{ isolated_gateway }} || true
+      nmcli con up isolated || true
+    else
+      echo "Warning: Second NIC not found"
     fi
 {% endif %}
   # Update system
