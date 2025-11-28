@@ -258,23 +258,32 @@ EOF
              sudo dpkg -i step-cli_amd64.deb && \
              step ca bootstrap --ca-url ${CA_URL} --fingerprint ${FINGERPRINT} --install"
         
-        # Request certificate for Harbor
+        # Request certificate for Harbor - get token from hypervisor (has SSH access to Step-CA)
         STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
+        echo "[INFO] Requesting certificate token from Step-CA..."
+        TOKEN=$(ssh -o StrictHostKeyChecking=no root@${STEP_CA_IP} \
+            "step ca token harbor.${DOMAIN} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner admin@example.com" | tail -1)
+        
+        if [ -z "$TOKEN" ]; then
+            echo "[ERROR] Failed to get certificate token from Step-CA"
+            exit 1
+        fi
+        
+        echo "[INFO] Requesting certificate on Harbor VM..."
         ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
             "sudo mkdir -p /etc/harbor/certs && \
-             TOKEN=\$(ssh -o StrictHostKeyChecking=no cloud-user@${STEP_CA_IP} \
-                'sudo step ca token harbor.${DOMAIN} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner admin@example.com' | tail -1) && \
-             step ca certificate harbor.${DOMAIN} /tmp/harbor.crt /tmp/harbor.key --ca-url ${CA_URL} --token \"\$TOKEN\" --force && \
+             step ca certificate harbor.${DOMAIN} /tmp/harbor.crt /tmp/harbor.key --ca-url ${CA_URL} --token '${TOKEN}' --force && \
              sudo mv /tmp/harbor.crt /etc/harbor/certs/ && \
              sudo mv /tmp/harbor.key /etc/harbor/certs/"
         
         # Install Harbor with step-ca certs
+        echo "[INFO] Installing Harbor..."
         ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
             "chmod +x /tmp/harbor.sh && \
              export CERT_MODE=step-ca && \
              export HARBOR_VERSION=${HARBOR_VERSION} && \
              export DOMAIN=${DOMAIN} && \
-             sudo -E /tmp/harbor-install-stepca.sh ${DOMAIN} ${HARBOR_VERSION}" || \
+             sudo -E /tmp/harbor.sh ${DOMAIN} ${HARBOR_VERSION} step-ca" || \
             echo "[WARN] Harbor configuration may need manual completion"
     else
         # Let's Encrypt mode
