@@ -67,6 +67,10 @@ function setup_certificate_authority() {
     # Set hostname
     sudo hostnamectl set-hostname step-ca-server.${DOMAIN}
     
+    # Get VM's IP address for DNS names
+    VM_IP=$(hostname -I | awk '{print $1}')
+    echo "[INFO] VM IP address: ${VM_IP}"
+    
     # Check if CA is already initialized
     if [ -f "${HOME}/.step/config/ca.json" ]; then
         echo "[INFO] CA already initialized, skipping init"
@@ -74,6 +78,9 @@ function setup_certificate_authority() {
         echo "[INFO] Initializing CA..."
         step ca init \
             --dns=step-ca-server.${DOMAIN} \
+            --dns=$(hostname -f) \
+            --dns=$(hostname -s) \
+            --dns=${VM_IP} \
             --dns=localhost \
             --dns=127.0.0.1 \
             --address=0.0.0.0:443 \
