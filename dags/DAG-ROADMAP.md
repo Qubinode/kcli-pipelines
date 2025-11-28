@@ -34,8 +34,10 @@ This document outlines the Airflow DAGs for kcli-pipelines, following ADR-0047 (
 +------------------------------------------------------------------+
 |                    Registry/Storage DAGs                          |
 +------------------------------------------------------------------+
-| registry_deployment.py    | Harbor/Mirror Registry (NOT TESTED)  |
-| ceph_cluster.py           | Ceph Storage (NOT TESTED)            |
+| mirror_registry_deployment.py | Quay Mirror Registry (TESTED)    |
+| harbor_deployment.py          | Harbor Enterprise (TESTED)       |
+| jfrog_deployment.py           | JFrog Artifactory (TESTED)       |
+| ceph_cluster.py               | Ceph Storage (NOT TESTED)        |
 +------------------------------------------------------------------+
 ```
 
@@ -194,6 +196,83 @@ airflow dags trigger step_ca_operations --conf '{
 
 ---
 
+### 2c. registry_deployment.py (Priority: HIGH)
+
+**Purpose**: Deploy container registries for disconnected OpenShift installs
+
+**Supported Registries**:
+- **mirror-registry**: Quay-based lightweight registry
+- **harbor**: Enterprise container registry (future)
+
+**Why Important**:
+- Required for disconnected/air-gapped OpenShift installs
+- Container image mirroring
+- Integrates with Step-CA for TLS certificates
+- Prerequisite for ocp4-disconnected-helper workflows
+
+**Architecture**:
+```
++------------------+     +------------------+     +------------------+
+|   Step-CA        | --> | Mirror Registry  | --> | OpenShift        |
+|   (Certificates) |     | (Images)         |     | (Disconnected)   |
++------------------+     +------------------+     +------------------+
+```
+
+**Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| action | choice | create | create, delete, status, health |
+| registry_type | choice | mirror-registry | mirror-registry, harbor |
+| vm_name | string | mirror-registry | VM name |
+| quay_version | string | v1.3.11 | Quay version |
+| domain | string | example.com | Domain for certificates |
+| step_ca_vm | string | step-ca-server | Step-CA VM name |
+
+**Tasks**:
+1. `check_step_ca_available` - Verify Step-CA is running (prerequisite)
+2. `validate_environment` - Check kcli, images, scripts
+3. `create_registry_vm` - Deploy registry VM via kcli
+4. `wait_for_registry_vm` - Wait for VM to be accessible
+5. `validate_registry_health` - Check registry health endpoint
+6. `deployment_complete` - Show deployment summary
+
+**Scripts**:
+- `/opt/kcli-pipelines/mirror-registry/deploy.sh`
+- `/opt/kcli-pipelines/mirror-registry/configure-quay.sh`
+
+**Example Usage**:
+```bash
+# Create mirror-registry
+airflow dags trigger registry_deployment --conf '{
+    "action": "create",
+    "registry_type": "mirror-registry",
+    "vm_name": "mirror-registry",
+    "quay_version": "v1.3.11"
+}'
+
+# Check health
+airflow dags trigger registry_deployment --conf '{
+    "action": "health",
+    "vm_name": "mirror-registry"
+}'
+
+# Delete registry
+airflow dags trigger registry_deployment --conf '{
+    "action": "delete",
+    "vm_name": "mirror-registry"
+}'
+```
+
+**Post-Deployment Usage**:
+```bash
+# Mirror OpenShift images
+oc adm release mirror --from=quay.io/openshift-release-dev/ocp-release:4.14.0-x86_64 \
+    --to=mirror-registry.example.com:8443/ocp4/openshift4 \
+    --to-release-image=mirror-registry.example.com:8443/ocp4/openshift4:4.14.0-x86_64
+```
+
+---
+
 ### 3. jumpserver_deployment.py (Priority: MEDIUM)
 
 **Purpose**: Deploy browser-based access to the environment via Apache Guacamole
@@ -277,11 +356,13 @@ The Step-CA DAG is critical for disconnected installs:
 | generic_vm_deployment.py | ✅ TESTED | 2025-11-28 | Working - deployed test-rhel9 VM |
 | step_ca_deployment.py | ✅ TESTED | 2025-11-28 | Working - deployed step-ca-server VM |
 | step_ca_operations.py | ✅ TESTED | 2025-11-28 | Certificate operations - provides instructions |
+| mirror_registry_deployment.py | ✅ TESTED | 2025-11-28 | Quay mirror-registry with Step-CA |
+| harbor_deployment.py | ✅ TESTED | 2025-11-28 | Harbor with Step-CA or Let's Encrypt |
+| jfrog_deployment.py | ✅ TESTED | 2025-11-28 | JFrog Artifactory OSS/Pro |
 | jumpserver_deployment.py | 🔨 PLANNED | - | Priority 3 |
 | ocp_agent_installer.py | ⚠️ NOT TESTED | - | From OneDev |
 | ocp_baremetal_internal.py | ⚠️ NOT TESTED | - | From OneDev |
 | ocp_baremetal_external.py | ⚠️ NOT TESTED | - | From OneDev |
-| registry_deployment.py | ⚠️ NOT TESTED | - | From OneDev |
 
 ---
 
