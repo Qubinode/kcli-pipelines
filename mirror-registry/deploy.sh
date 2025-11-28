@@ -237,6 +237,40 @@ fi
 EOF
     fi
     
+    # Fix DNS to use external resolvers (avoid FreeIPA search domain issues)
+    echo "[INFO] Configuring DNS resolvers..."
+    ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<'DNSEOF'
+# Use external DNS to avoid domain suffix issues with FreeIPA
+cat > /etc/resolv.conf <<EOF
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+EOF
+echo "[OK] DNS configured"
+DNSEOF
+    
+    # Add hostname to /etc/hosts for local resolution
+    echo "[INFO] Setting up hostname resolution..."
+    ssh -o StrictHostKeyChecking=no root@${IP} \
+        "echo '${IP} mirror-registry.${DOMAIN} mirror-registry' >> /etc/hosts && \
+         echo '127.0.0.1 mirror-registry.${DOMAIN} mirror-registry' >> /etc/hosts && \
+         hostnamectl set-hostname mirror-registry.${DOMAIN}"
+    
+    # Setup SSH keys for cloud-user (needed by mirror-registry installer)
+    echo "[INFO] Setting up SSH keys for cloud-user..."
+    ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<'SSHEOF'
+mkdir -p /home/cloud-user/.ssh /root/.ssh
+if [ ! -f /root/.ssh/id_rsa ]; then
+    ssh-keygen -t rsa -N '' -f /root/.ssh/id_rsa
+fi
+cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys
+cp /root/.ssh/id_rsa.pub /home/cloud-user/.ssh/authorized_keys
+chown -R cloud-user:cloud-user /home/cloud-user/.ssh
+chmod 700 /home/cloud-user/.ssh /root/.ssh
+chmod 600 /home/cloud-user/.ssh/authorized_keys /root/.ssh/authorized_keys
+ssh -o StrictHostKeyChecking=no localhost hostname  # Add to known_hosts
+echo "[OK] SSH keys configured"
+SSHEOF
+    
     # Copy and run configuration script
     echo "[INFO] Configuring Mirror-Registry on VM..."
     

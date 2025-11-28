@@ -120,17 +120,29 @@ then
     step certificate install $(step path)/certs/root_ca.crt
 fi
 
+# Create password file for Step-CA
+mkdir -p /etc/step
 if [ -f /tmp/initial_password ]; then
-    mkdir -p /etc/step
     cp /tmp/initial_password /etc/step/initial_password
+else
+    # Use SSH_PASSWORD as fallback for Step-CA provisioner password
+    echo "${SSH_PASSWORD}" > /etc/step/initial_password
 fi
+chmod 600 /etc/step/initial_password
 
-if [ ! -f /root/quay-certs/${DOMAIN}.crt ];
+if [ ! -f /root/quay-certs/mirror-registry.${DOMAIN}.crt ];
 then
-  mkdir /root/quay-certs
+  mkdir -p /root/quay-certs
   cd /root/quay-certs
-  TOKEN=$(step ca token mirror-registry.${DOMAIN} --password-file=/etc/step/initial_password --issuer="root@internal.${DOMAIN} ")
-  step ca certificate --token $TOKEN --not-after=1440h   mirror-registry.${DOMAIN}  mirror-registry.${DOMAIN}.crt  mirror-registry.${DOMAIN}.key 
+  echo "[INFO] Requesting certificate from Step-CA..."
+  # Use admin@example.com provisioner (default Step-CA JWK provisioner)
+  TOKEN=$(step ca token mirror-registry.${DOMAIN} --password-file=/etc/step/initial_password --provisioner="admin@example.com")
+  # Use 24h duration (Step-CA default max)
+  step ca certificate --token $TOKEN --not-after=24h mirror-registry.${DOMAIN} mirror-registry.${DOMAIN}.crt mirror-registry.${DOMAIN}.key || {
+      echo "[ERROR] Failed to get certificate from Step-CA"
+      exit 1
+  }
+  echo "[OK] Certificate obtained"
 fi
 
 
@@ -147,5 +159,33 @@ sudo chown cloud-user:cloud-user  -R  /registry/
 sudo chown cloud-user:cloud-user  -R /home/cloud-user 
 
 
-echo "Installing mirror-registry without self-signed certificate"
-./mirror-registry install  --quayRoot /registry/ --quayHostname mirror-registry.${DOMAIN} -k /root/quay-certs  --targetUsername  cloud-user --ssh-key ~/.ssh/id_rsa || tee /tmp/mirror-registry-offline.log
+echo "[INFO] Installing mirror-registry with Step-CA certificate..."
+cd /root
+
+# Ensure tarball is extracted
+if [ ! -f /root/mirror-registry ]; then
+    tar -zxvf mirror-registry-offline.tar.gz || exit 1
+fi
+chmod +x /root/mirror-registry
+
+# Create cloud-user .run directory for podman
+mkdir -p /home/cloud-user/.run/containers
+chown -R cloud-user:cloud-user /home/cloud-user/.run
+
+# Install with Step-CA certs
+./mirror-registry install \
+    --quayRoot /registry/ \
+    --quayHostname mirror-registry.${DOMAIN} \
+    --sslCert /root/quay-certs/mirror-registry.${DOMAIN}.crt \
+    --sslKey /root/quay-certs/mirror-registry.${DOMAIN}.key \
+    --targetUsername cloud-user \
+    --ssh-key ~/.ssh/id_rsa \
+    --initPassword ${SSH_PASSWORD} \
+    --verbose 2>&1 | tee /root/mirror-registry-offline.log
+
+if [ $? -eq 0 ]; then
+    echo "[OK] Mirror-registry installed successfully"
+else
+    echo "[ERROR] Mirror-registry installation failed - check /root/mirror-registry-offline.log"
+    exit 1
+fi

@@ -40,7 +40,7 @@ dag = DAG(
     params={
         'action': 'create',  # create, delete, status, health
         'vm_name': 'mirror-registry',  # VM name
-        'quay_version': 'v1.3.11',  # Quay mirror-registry version
+        'quay_version': 'v2.0.3',  # Quay mirror-registry version (latest stable)
         'domain': 'example.com',  # Domain for certificates
         'target_server': 'localhost',  # Target server
         'network': 'default',  # Primary network (DHCP for management)
