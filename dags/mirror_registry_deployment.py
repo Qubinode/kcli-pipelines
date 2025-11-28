@@ -43,7 +43,10 @@ dag = DAG(
         'quay_version': 'v1.3.11',  # Quay mirror-registry version
         'domain': 'example.com',  # Domain for certificates
         'target_server': 'localhost',  # Target server
-        'network': 'qubinet',  # Network to deploy on
+        'network': 'default',  # Primary network (DHCP for management)
+        'isolated_network': '1924',  # Isolated network for disconnected OCP
+        'isolated_ip': '192.168.49.10',  # Static IP on isolated network
+        'isolated_gateway': '192.168.49.1',  # Gateway for isolated network
         'step_ca_vm': 'step-ca-server',  # Step-CA server VM name
     },
     doc_md="""
@@ -57,15 +60,29 @@ dag = DAG(
     - Supports disconnected/air-gapped installs
     - Integrates with **Step-CA** for TLS certificates
     - RHEL8-based VM with Podman
+    - **Dual-NIC architecture** for management + isolated network access
     
     ## Architecture
     
     ```
     +------------------+     +------------------+     +------------------+
     |   Step-CA        | --> | Mirror Registry  | --> | OpenShift        |
-    |   (Certificates) |     | (Images)         |     | (Disconnected)   |
-    +------------------+     +------------------+     +------------------+
+    |   (Certificates) |     | (eth0: mgmt)     |     | (Disconnected)   |
+    +------------------+     | (eth1: isolated) |     +------------------+
+                             +------------------+
+                                    |
+                             +------------------+
+                             |   VyOS Router    |
+                             |  (192.168.49.x)  |
+                             +------------------+
     ```
+    
+    ## Dual-NIC Network Design
+    
+    | Interface | Network  | Purpose                    | IP Type  |
+    |-----------|----------|----------------------------|----------|
+    | eth0      | default  | Management/SSH access      | DHCP     |
+    | eth1      | 1924     | Disconnected OCP access    | Static   |
     
     ## Prerequisites
     
@@ -75,6 +92,7 @@ dag = DAG(
        ```
     
     2. **FreeIPA** should be running for DNS registration
+    3. **VyOS Router** should be configured with DHCP on isolated network
     
     ## Parameters
     
@@ -82,16 +100,23 @@ dag = DAG(
     - **vm_name**: Name for the registry VM (default: mirror-registry)
     - **quay_version**: Quay mirror-registry version
     - **domain**: Domain for certificate generation
+    - **network**: Primary network with DHCP (default: default)
+    - **isolated_network**: Isolated network for OCP (default: 1924)
+    - **isolated_ip**: Static IP on isolated network (default: 192.168.49.10)
+    - **isolated_gateway**: Gateway for isolated network (default: 192.168.49.1)
     - **step_ca_vm**: Name of the Step-CA server VM
     
     ## Usage
     
-    ### Create Mirror-Registry
+    ### Create Mirror-Registry with Dual-NIC
     ```bash
     airflow dags trigger mirror_registry_deployment --conf '{
         "action": "create",
         "vm_name": "mirror-registry",
-        "quay_version": "v1.3.11"
+        "quay_version": "v1.3.11",
+        "network": "default",
+        "isolated_network": "1924",
+        "isolated_ip": "192.168.49.10"
     }'
     ```
     
@@ -276,17 +301,24 @@ create_registry = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Creating Mirror-Registry VM"
+    echo "Creating Mirror-Registry VM (Dual-NIC)"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
     QUAY_VERSION="{{ params.quay_version }}"
     DOMAIN="{{ params.domain }}"
     NETWORK="{{ params.network }}"
+    ISOLATED_NETWORK="{{ params.isolated_network }}"
+    ISOLATED_IP="{{ params.isolated_ip }}"
+    ISOLATED_GATEWAY="{{ params.isolated_gateway }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
     
     echo "VM Name: $VM_NAME"
     echo "Quay Version: $QUAY_VERSION"
+    echo "Primary Network: $NETWORK (DHCP)"
+    echo "Isolated Network: $ISOLATED_NETWORK"
+    echo "Isolated IP: $ISOLATED_IP"
+    echo "Isolated Gateway: $ISOLATED_GATEWAY"
     
     # Check if VM already exists
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
@@ -311,8 +343,8 @@ create_registry = BashOperator(
     echo "Step-CA URL: $CA_URL"
     echo "CA Fingerprint: $FINGERPRINT"
     
-    # Create mirror-registry
-    echo "Creating Mirror-Registry..."
+    # Create mirror-registry with dual-NIC
+    echo "Creating Mirror-Registry with Dual-NIC..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
          export QUAY_VERSION=$QUAY_VERSION && \
@@ -320,11 +352,14 @@ create_registry = BashOperator(
          export FINGERPRINT=$FINGERPRINT && \
          export STEP_CA_PASSWORD=password && \
          export NET_NAME=$NETWORK && \
+         export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
+         export ISOLATED_IP=$ISOLATED_IP && \
+         export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
          cd /opt/kcli-pipelines && \
          ./mirror-registry/deploy.sh create"
     
     echo ""
-    echo "[OK] Mirror-Registry deployment initiated"
+    echo "[OK] Mirror-Registry deployment initiated with dual-NIC"
     ''',
     execution_timeout=timedelta(minutes=45),
     dag=dag,

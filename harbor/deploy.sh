@@ -3,15 +3,22 @@
 # Usage: ./deploy.sh [create|delete|status|health]
 #
 # Environment Variables:
-#   HARBOR_VERSION    - Harbor version (e.g., v2.10.1)
-#   CERT_MODE         - Certificate mode: step-ca or letsencrypt (default: step-ca)
-#   CA_URL            - Step-CA URL (for step-ca mode)
-#   FINGERPRINT       - Step-CA fingerprint (for step-ca mode)
-#   AWS_ACCESS_KEY_ID - AWS access key (for letsencrypt mode)
+#   HARBOR_VERSION      - Harbor version (e.g., v2.10.1)
+#   CERT_MODE           - Certificate mode: step-ca or letsencrypt (default: step-ca)
+#   CA_URL              - Step-CA URL (for step-ca mode)
+#   FINGERPRINT         - Step-CA fingerprint (for step-ca mode)
+#   AWS_ACCESS_KEY_ID   - AWS access key (for letsencrypt mode)
 #   AWS_SECRET_ACCESS_KEY - AWS secret key (for letsencrypt mode)
-#   EMAIL             - Email for Let's Encrypt (for letsencrypt mode)
-#   VM_NAME           - Custom VM name (default: harbor)
-#   NET_NAME          - Network to deploy on
+#   EMAIL               - Email for Let's Encrypt (for letsencrypt mode)
+#   VM_NAME             - Custom VM name (default: harbor)
+#   NET_NAME            - Primary network (default: default - has DHCP)
+#   ISOLATED_NET_NAME   - Secondary isolated network (e.g., 1924)
+#   ISOLATED_IP         - Static IP for isolated network (e.g., 192.168.49.20)
+#   ISOLATED_GATEWAY    - Gateway for isolated network (e.g., 192.168.49.1)
+#
+# Dual-NIC Architecture:
+#   eth0 - Primary network (default) with DHCP for management
+#   eth1 - Isolated network (1924) with static IP for disconnected OpenShift
 #
 # This script deploys Harbor container registry for:
 # - Enterprise container image management
@@ -20,6 +27,13 @@
 
 set -euo pipefail
 export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+
+# Preserve environment variables passed from caller BEFORE sourcing defaults
+_PASSED_NET_NAME="${NET_NAME:-}"
+_PASSED_DOMAIN="${DOMAIN:-}"
+_PASSED_ISOLATED_NET="${ISOLATED_NET_NAME:-}"
+_PASSED_ISOLATED_IP="${ISOLATED_IP:-}"
+_PASSED_ISOLATED_GW="${ISOLATED_GATEWAY:-}"
 
 # Default values
 ACTION="${1:-create}"
@@ -37,12 +51,25 @@ else
     exit 1
 fi
 
+# Restore passed environment variables (override defaults)
+[ -n "$_PASSED_NET_NAME" ] && NET_NAME="$_PASSED_NET_NAME"
+[ -n "$_PASSED_DOMAIN" ] && DOMAIN="$_PASSED_DOMAIN"
+[ -n "$_PASSED_ISOLATED_NET" ] && ISOLATED_NET_NAME="$_PASSED_ISOLATED_NET"
+[ -n "$_PASSED_ISOLATED_IP" ] && ISOLATED_IP="$_PASSED_ISOLATED_IP"
+[ -n "$_PASSED_ISOLATED_GW" ] && ISOLATED_GATEWAY="$_PASSED_ISOLATED_GW"
+
 # Source helper functions if available
 if [ -f /opt/kcli-pipelines/helper_scripts/helper_functions.sh ]; then
     source /opt/kcli-pipelines/helper_scripts/helper_functions.sh
 elif [ -f helper_scripts/helper_functions.sh ]; then
     source helper_scripts/helper_functions.sh
 fi
+
+# Set defaults for networks
+NET_NAME="${NET_NAME:-default}"
+ISOLATED_NET_NAME="${ISOLATED_NET_NAME:-}"
+ISOLATED_IP="${ISOLATED_IP:-}"
+ISOLATED_GATEWAY="${ISOLATED_GATEWAY:-192.168.49.1}"
 
 # Get domain from ansible variables
 DOMAIN=$(yq eval '.domain' "${ANSIBLE_ALL_VARIABLES}" 2>/dev/null || echo "example.com")
@@ -55,7 +82,12 @@ echo "VM Name: ${VM_NAME}"
 echo "Domain: ${DOMAIN}"
 echo "Harbor Version: ${HARBOR_VERSION}"
 echo "Certificate Mode: ${CERT_MODE}"
-echo "Network: ${NET_NAME:-qubinet}"
+echo "Primary Network: ${NET_NAME}"
+if [ -n "${ISOLATED_NET_NAME}" ]; then
+    echo "Isolated Network: ${ISOLATED_NET_NAME}"
+    echo "Isolated IP: ${ISOLATED_IP:-auto}"
+    echo "Isolated Gateway: ${ISOLATED_GATEWAY}"
+fi
 echo "========================================"
 
 function check_prerequisites() {
@@ -135,13 +167,22 @@ function create_harbor() {
     
     echo "[INFO] Creating VM ${VM_NAME}..."
     
-    # Create VM using kcli
+    # Build network configuration - dual NIC if isolated network specified
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "[INFO] Configuring dual-NIC: ${NET_NAME} (DHCP) + ${ISOLATED_NET_NAME} (${ISOLATED_IP})"
+        NETS_CONFIG="[{\"name\": \"${NET_NAME}\"}, {\"name\": \"${ISOLATED_NET_NAME}\", \"ip\": \"${ISOLATED_IP}\", \"mask\": \"255.255.255.0\", \"gateway\": \"${ISOLATED_GATEWAY}\"}]"
+    else
+        echo "[INFO] Configuring single NIC: ${NET_NAME}"
+        NETS_CONFIG="[{\"name\": \"${NET_NAME}\"}]"
+    fi
+    
+    # Create VM using kcli with dual-NIC support
     kcli create vm "${VM_NAME}" \
         -i "${IMAGE}" \
         -P numcpus=4 \
         -P memory=8192 \
         -P disks="[300]" \
-        -P nets="[{\"name\": \"${NET_NAME:-qubinet}\"}]" \
+        -P nets="${NETS_CONFIG}" \
         -P dns="${FREEIPA_IP}" \
         -P cmds="[\"apt-get update\", \"apt-get install -y curl wget git jq\"]" \
         --wait
@@ -150,9 +191,9 @@ function create_harbor() {
     echo "[INFO] Waiting for VM to get IP..."
     sleep 30
     
-    # Get VM IP
+    # Get VM IP (primary interface)
     IP=$(kcli info vm "${VM_NAME}" | grep 'ip:' | awk '{print $2}' | head -1)
-    echo "[INFO] VM IP: ${IP}"
+    echo "[INFO] VM Primary IP: ${IP}"
     
     if [ -z "$IP" ] || [ "$IP" == "None" ]; then
         echo "[ERROR] VM did not get an IP address"
@@ -172,6 +213,34 @@ function create_harbor() {
         echo "[INFO] Waiting for SSH... (${ATTEMPT}/${MAX_ATTEMPTS})"
         sleep 10
     done
+    
+    # Configure second NIC if dual-NIC mode
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "[INFO] Configuring isolated network interface..."
+        ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} bash -s <<EOF
+# Find second NIC (Ubuntu uses different naming)
+SECOND_NIC=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | tail -1)
+if [ -n "\$SECOND_NIC" ]; then
+    echo "Configuring \$SECOND_NIC with IP ${ISOLATED_IP}"
+    # Use netplan for Ubuntu
+    sudo tee /etc/netplan/99-isolated.yaml > /dev/null <<NETPLAN
+network:
+  version: 2
+  ethernets:
+    \$SECOND_NIC:
+      addresses:
+        - ${ISOLATED_IP}/24
+      routes:
+        - to: 192.168.49.0/24
+          via: ${ISOLATED_GATEWAY}
+NETPLAN
+    sudo netplan apply
+    echo "[OK] Isolated network configured"
+else
+    echo "[WARN] Second NIC not found"
+fi
+EOF
+    fi
     
     # Copy and run configuration script
     echo "[INFO] Configuring Harbor on VM..."
@@ -221,7 +290,10 @@ function create_harbor() {
     echo "Harbor Deployment Complete"
     echo "========================================"
     echo "VM Name: ${VM_NAME}"
-    echo "IP Address: ${IP}"
+    echo "Primary IP (management): ${IP}"
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "Isolated IP (disconnected): ${ISOLATED_IP}"
+    fi
     echo "Harbor URL: https://harbor.${DOMAIN}"
     echo ""
     echo "Default credentials:"
@@ -325,4 +397,3 @@ case "${ACTION}" in
         exit 1
         ;;
 esac
-

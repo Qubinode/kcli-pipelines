@@ -3,12 +3,19 @@
 # Usage: ./deploy.sh [create|delete|status|health]
 #
 # Environment Variables:
-#   QUAY_VERSION      - Quay mirror-registry version (e.g., v1.3.11)
-#   CA_URL            - Step-CA URL for certificates
-#   FINGERPRINT       - Step-CA fingerprint
-#   STEP_CA_PASSWORD  - Step-CA password
-#   VM_NAME           - Custom VM name (default: mirror-registry)
-#   NET_NAME          - Network to deploy on (default: from default.env)
+#   QUAY_VERSION        - Quay mirror-registry version (e.g., v1.3.11)
+#   CA_URL              - Step-CA URL for certificates
+#   FINGERPRINT         - Step-CA fingerprint
+#   STEP_CA_PASSWORD    - Step-CA password
+#   VM_NAME             - Custom VM name (default: mirror-registry)
+#   NET_NAME            - Primary network (default: default - has DHCP)
+#   ISOLATED_NET_NAME   - Secondary isolated network (e.g., 1924)
+#   ISOLATED_IP         - Static IP for isolated network (e.g., 192.168.49.10)
+#   ISOLATED_GATEWAY    - Gateway for isolated network (e.g., 192.168.49.1)
+#
+# Dual-NIC Architecture:
+#   eth0 - Primary network (default) with DHCP for management
+#   eth1 - Isolated network (1924) with static IP for disconnected OpenShift
 #
 # This script deploys a Quay mirror-registry for:
 # - Disconnected OpenShift installs
@@ -17,6 +24,13 @@
 
 set -euo pipefail
 export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+
+# Preserve environment variables passed from caller BEFORE sourcing defaults
+_PASSED_NET_NAME="${NET_NAME:-}"
+_PASSED_DOMAIN="${DOMAIN:-}"
+_PASSED_ISOLATED_NET="${ISOLATED_NET_NAME:-}"
+_PASSED_ISOLATED_IP="${ISOLATED_IP:-}"
+_PASSED_ISOLATED_GW="${ISOLATED_GATEWAY:-}"
 
 # Default values
 ACTION="${1:-create}"
@@ -33,12 +47,25 @@ else
     exit 1
 fi
 
+# Restore passed environment variables (override defaults)
+[ -n "$_PASSED_NET_NAME" ] && NET_NAME="$_PASSED_NET_NAME"
+[ -n "$_PASSED_DOMAIN" ] && DOMAIN="$_PASSED_DOMAIN"
+[ -n "$_PASSED_ISOLATED_NET" ] && ISOLATED_NET_NAME="$_PASSED_ISOLATED_NET"
+[ -n "$_PASSED_ISOLATED_IP" ] && ISOLATED_IP="$_PASSED_ISOLATED_IP"
+[ -n "$_PASSED_ISOLATED_GW" ] && ISOLATED_GATEWAY="$_PASSED_ISOLATED_GW"
+
 # Source helper functions if available
 if [ -f /opt/kcli-pipelines/helper_scripts/helper_functions.sh ]; then
     source /opt/kcli-pipelines/helper_scripts/helper_functions.sh
 elif [ -f helper_scripts/helper_functions.sh ]; then
     source helper_scripts/helper_functions.sh
 fi
+
+# Set defaults for networks
+NET_NAME="${NET_NAME:-default}"
+ISOLATED_NET_NAME="${ISOLATED_NET_NAME:-}"
+ISOLATED_IP="${ISOLATED_IP:-}"
+ISOLATED_GATEWAY="${ISOLATED_GATEWAY:-192.168.49.1}"
 
 # Get domain from ansible variables
 DOMAIN=$(yq eval '.domain' "${ANSIBLE_ALL_VARIABLES}" 2>/dev/null || echo "example.com")
@@ -50,7 +77,12 @@ echo "Action: ${ACTION}"
 echo "VM Name: ${VM_NAME}"
 echo "Domain: ${DOMAIN}"
 echo "Quay Version: ${QUAY_VERSION}"
-echo "Network: ${NET_NAME:-qubinet}"
+echo "Primary Network: ${NET_NAME}"
+if [ -n "${ISOLATED_NET_NAME}" ]; then
+    echo "Isolated Network: ${ISOLATED_NET_NAME}"
+    echo "Isolated IP: ${ISOLATED_IP:-auto}"
+    echo "Isolated Gateway: ${ISOLATED_GATEWAY}"
+fi
 echo "========================================"
 
 function check_prerequisites() {
@@ -130,13 +162,22 @@ function create_mirror_registry() {
     
     echo "[INFO] Creating VM ${VM_NAME}..."
     
-    # Create VM using kcli
+    # Build network configuration - dual NIC if isolated network specified
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "[INFO] Configuring dual-NIC: ${NET_NAME} (DHCP) + ${ISOLATED_NET_NAME} (${ISOLATED_IP})"
+        NETS_CONFIG="[{\"name\": \"${NET_NAME}\"}, {\"name\": \"${ISOLATED_NET_NAME}\", \"ip\": \"${ISOLATED_IP}\", \"mask\": \"255.255.255.0\", \"gateway\": \"${ISOLATED_GATEWAY}\"}]"
+    else
+        echo "[INFO] Configuring single NIC: ${NET_NAME}"
+        NETS_CONFIG="[{\"name\": \"${NET_NAME}\"}]"
+    fi
+    
+    # Create VM using kcli with dual-NIC support
     kcli create vm "${VM_NAME}" \
         -i "${IMAGE}" \
         -P numcpus=4 \
         -P memory=8192 \
         -P disks="[300]" \
-        -P nets="[{\"name\": \"${NET_NAME:-qubinet}\"}]" \
+        -P nets="${NETS_CONFIG}" \
         -P dns="${FREEIPA_IP}" \
         -P cmds="[\"echo ${PASSWORD} | passwd --stdin root\", \"dnf install -y git vim wget curl jq podman skopeo\"]" \
         --wait
@@ -145,9 +186,9 @@ function create_mirror_registry() {
     echo "[INFO] Waiting for VM to get IP..."
     sleep 30
     
-    # Get VM IP
+    # Get VM IP (primary interface)
     IP=$(kcli info vm "${VM_NAME}" | grep 'ip:' | awk '{print $2}' | head -1)
-    echo "[INFO] VM IP: ${IP}"
+    echo "[INFO] VM Primary IP: ${IP}"
     
     if [ -z "$IP" ] || [ "$IP" == "None" ]; then
         echo "[ERROR] VM did not get an IP address"
@@ -168,6 +209,23 @@ function create_mirror_registry() {
         sleep 10
     done
     
+    # Configure second NIC if dual-NIC mode
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "[INFO] Configuring isolated network interface..."
+        ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<EOF
+# Find second NIC
+SECOND_NIC=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | tail -1)
+if [ -n "\$SECOND_NIC" ]; then
+    echo "Configuring \$SECOND_NIC with IP ${ISOLATED_IP}"
+    nmcli con add type ethernet con-name isolated ifname \$SECOND_NIC ip4 ${ISOLATED_IP}/24 gw4 ${ISOLATED_GATEWAY} || true
+    nmcli con up isolated || true
+    echo "[OK] Isolated network configured"
+else
+    echo "[WARN] Second NIC not found"
+fi
+EOF
+    fi
+    
     # Copy and run configuration script
     echo "[INFO] Configuring Mirror-Registry on VM..."
     
@@ -186,7 +244,10 @@ function create_mirror_registry() {
     echo "Mirror-Registry Deployment Complete"
     echo "========================================"
     echo "VM Name: ${VM_NAME}"
-    echo "IP Address: ${IP}"
+    echo "Primary IP (management): ${IP}"
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "Isolated IP (disconnected): ${ISOLATED_IP}"
+    fi
     echo "Registry URL: https://mirror-registry.${DOMAIN}:8443"
     echo ""
     echo "Login credentials:"
@@ -290,4 +351,3 @@ case "${ACTION}" in
         exit 1
         ;;
 esac
-

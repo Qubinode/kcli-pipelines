@@ -3,13 +3,20 @@
 # Usage: ./deploy.sh [create|delete|status|health]
 #
 # Environment Variables:
-#   JFROG_VERSION     - JFrog Artifactory version (e.g., 7.77.5)
-#   JFROG_EDITION     - Edition: oss (Open Source) or pro (default: oss)
-#   CERT_MODE         - Certificate mode: step-ca or self-signed (default: step-ca)
-#   CA_URL            - Step-CA URL (for step-ca mode)
-#   FINGERPRINT       - Step-CA fingerprint (for step-ca mode)
-#   VM_NAME           - Custom VM name (default: jfrog)
-#   NET_NAME          - Network to deploy on
+#   JFROG_VERSION       - JFrog Artifactory version (e.g., 7.77.5)
+#   JFROG_EDITION       - Edition: oss (Open Source) or pro (default: oss)
+#   CERT_MODE           - Certificate mode: step-ca or self-signed (default: step-ca)
+#   CA_URL              - Step-CA URL (for step-ca mode)
+#   FINGERPRINT         - Step-CA fingerprint (for step-ca mode)
+#   VM_NAME             - Custom VM name (default: jfrog)
+#   NET_NAME            - Primary network (default: default - has DHCP)
+#   ISOLATED_NET_NAME   - Secondary isolated network (e.g., 1924)
+#   ISOLATED_IP         - Static IP for isolated network (e.g., 192.168.49.30)
+#   ISOLATED_GATEWAY    - Gateway for isolated network (e.g., 192.168.49.1)
+#
+# Dual-NIC Architecture:
+#   eth0 - Primary network (default) with DHCP for management
+#   eth1 - Isolated network (1924) with static IP for disconnected OpenShift
 #
 # This script deploys JFrog Artifactory container registry for:
 # - Universal artifact repository
@@ -18,6 +25,13 @@
 
 set -euo pipefail
 export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+
+# Preserve environment variables passed from caller BEFORE sourcing defaults
+_PASSED_NET_NAME="${NET_NAME:-}"
+_PASSED_DOMAIN="${DOMAIN:-}"
+_PASSED_ISOLATED_NET="${ISOLATED_NET_NAME:-}"
+_PASSED_ISOLATED_IP="${ISOLATED_IP:-}"
+_PASSED_ISOLATED_GW="${ISOLATED_GATEWAY:-}"
 
 # Default values
 ACTION="${1:-create}"
@@ -36,12 +50,25 @@ else
     exit 1
 fi
 
+# Restore passed environment variables (override defaults)
+[ -n "$_PASSED_NET_NAME" ] && NET_NAME="$_PASSED_NET_NAME"
+[ -n "$_PASSED_DOMAIN" ] && DOMAIN="$_PASSED_DOMAIN"
+[ -n "$_PASSED_ISOLATED_NET" ] && ISOLATED_NET_NAME="$_PASSED_ISOLATED_NET"
+[ -n "$_PASSED_ISOLATED_IP" ] && ISOLATED_IP="$_PASSED_ISOLATED_IP"
+[ -n "$_PASSED_ISOLATED_GW" ] && ISOLATED_GATEWAY="$_PASSED_ISOLATED_GW"
+
 # Source helper functions if available
 if [ -f /opt/kcli-pipelines/helper_scripts/helper_functions.sh ]; then
     source /opt/kcli-pipelines/helper_scripts/helper_functions.sh
 elif [ -f helper_scripts/helper_functions.sh ]; then
     source helper_scripts/helper_functions.sh
 fi
+
+# Set defaults for networks
+NET_NAME="${NET_NAME:-default}"
+ISOLATED_NET_NAME="${ISOLATED_NET_NAME:-}"
+ISOLATED_IP="${ISOLATED_IP:-}"
+ISOLATED_GATEWAY="${ISOLATED_GATEWAY:-192.168.49.1}"
 
 # Get domain from ansible variables
 DOMAIN=$(yq eval '.domain' "${ANSIBLE_ALL_VARIABLES}" 2>/dev/null || echo "example.com")
@@ -55,7 +82,12 @@ echo "Domain: ${DOMAIN}"
 echo "JFrog Version: ${JFROG_VERSION}"
 echo "JFrog Edition: ${JFROG_EDITION}"
 echo "Certificate Mode: ${CERT_MODE}"
-echo "Network: ${NET_NAME:-qubinet}"
+echo "Primary Network: ${NET_NAME}"
+if [ -n "${ISOLATED_NET_NAME}" ]; then
+    echo "Isolated Network: ${ISOLATED_NET_NAME}"
+    echo "Isolated IP: ${ISOLATED_IP:-auto}"
+    echo "Isolated Gateway: ${ISOLATED_GATEWAY}"
+fi
 echo "========================================"
 
 function check_prerequisites() {
@@ -79,6 +111,7 @@ function check_prerequisites() {
     
     # Check certificate prerequisites
     if [ "$CERT_MODE" == "step-ca" ]; then
+        # Check Step-CA server
         if [ -z "${CA_URL:-}" ] || [ -z "${FINGERPRINT:-}" ]; then
             STEP_CA_IP=$(kcli info vm step-ca-server 2>/dev/null | grep 'ip:' | awk '{print $2}' | head -1)
             if [ -n "$STEP_CA_IP" ]; then
@@ -91,8 +124,9 @@ function check_prerequisites() {
                 echo "[OK] CA_URL: ${CA_URL}"
                 echo "[OK] Fingerprint: ${FINGERPRINT:-NOT_FOUND}"
             else
-                echo "[WARN] Step-CA server not found, will use self-signed certificates"
-                CERT_MODE="self-signed"
+                echo "[ERROR] Step-CA server not found and CA_URL/FINGERPRINT not set"
+                echo "Deploy Step-CA first or use CERT_MODE=self-signed"
+                exit 1
             fi
         fi
     fi
@@ -127,24 +161,33 @@ function create_jfrog() {
     
     echo "[INFO] Creating VM ${VM_NAME}..."
     
-    # Create VM using kcli
+    # Build network configuration - dual NIC if isolated network specified
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "[INFO] Configuring dual-NIC: ${NET_NAME} (DHCP) + ${ISOLATED_NET_NAME} (${ISOLATED_IP})"
+        NETS_CONFIG="[{\"name\": \"${NET_NAME}\"}, {\"name\": \"${ISOLATED_NET_NAME}\", \"ip\": \"${ISOLATED_IP}\", \"mask\": \"255.255.255.0\", \"gateway\": \"${ISOLATED_GATEWAY}\"}]"
+    else
+        echo "[INFO] Configuring single NIC: ${NET_NAME}"
+        NETS_CONFIG="[{\"name\": \"${NET_NAME}\"}]"
+    fi
+    
+    # Create VM using kcli with dual-NIC support
     kcli create vm "${VM_NAME}" \
         -i "${IMAGE}" \
         -P numcpus=4 \
         -P memory=8192 \
-        -P disks="[100]" \
-        -P nets="[{\"name\": \"${NET_NAME:-qubinet}\"}]" \
+        -P disks="[300]" \
+        -P nets="${NETS_CONFIG}" \
         -P dns="${FREEIPA_IP}" \
-        -P cmds="[\"echo ${PASSWORD} | passwd --stdin root\", \"dnf install -y podman podman-docker curl wget git jq firewalld\", \"systemctl enable --now firewalld podman\", \"firewall-cmd --permanent --add-port=8081/tcp --add-port=8082/tcp --add-port=443/tcp\", \"firewall-cmd --reload\"]" \
+        -P cmds="[\"echo ${PASSWORD} | passwd --stdin root\", \"dnf install -y curl wget git jq podman java-11-openjdk-headless\"]" \
         --wait
     
     # Wait for VM to get IP
     echo "[INFO] Waiting for VM to get IP..."
     sleep 30
     
-    # Get VM IP
+    # Get VM IP (primary interface)
     IP=$(kcli info vm "${VM_NAME}" | grep 'ip:' | awk '{print $2}' | head -1)
-    echo "[INFO] VM IP: ${IP}"
+    echo "[INFO] VM Primary IP: ${IP}"
     
     if [ -z "$IP" ] || [ "$IP" == "None" ]; then
         echo "[ERROR] VM did not get an IP address"
@@ -165,98 +208,100 @@ function create_jfrog() {
         sleep 10
     done
     
-    # Configure JFrog Artifactory
-    echo "[INFO] Configuring JFrog Artifactory..."
-    
-    # Set hostname
-    ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
-        "sudo hostnamectl set-hostname jfrog.${DOMAIN}"
-    
-    # Create directories
-    ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
-        "sudo mkdir -p /opt/jfrog/artifactory/var/{etc,data,backup} && \
-         sudo chown -R 1030:1030 /opt/jfrog"
-    
-    # Configure certificates
-    if [ "$CERT_MODE" == "step-ca" ]; then
-        echo "[INFO] Configuring Step-CA certificates..."
-        
-        # Bootstrap Step-CA on JFrog VM
-        STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
-        ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
-            "wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm && \
-             sudo rpm -i step-cli_amd64.rpm && \
-             step ca bootstrap --ca-url ${CA_URL} --fingerprint ${FINGERPRINT} --install"
-        
-        # Request certificate
-        ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
-            "sudo mkdir -p /opt/jfrog/artifactory/var/etc/security && \
-             TOKEN=\$(ssh -o StrictHostKeyChecking=no cloud-user@${STEP_CA_IP} \
-                'sudo step ca token jfrog.${DOMAIN} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner admin@example.com' | tail -1) && \
-             step ca certificate jfrog.${DOMAIN} /tmp/jfrog.crt /tmp/jfrog.key --ca-url ${CA_URL} --token \"\$TOKEN\" --force && \
-             sudo mv /tmp/jfrog.crt /opt/jfrog/artifactory/var/etc/security/ && \
-             sudo mv /tmp/jfrog.key /opt/jfrog/artifactory/var/etc/security/ && \
-             sudo chown 1030:1030 /opt/jfrog/artifactory/var/etc/security/*"
-    else
-        echo "[INFO] Generating self-signed certificate..."
-        ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
-            "sudo mkdir -p /opt/jfrog/artifactory/var/etc/security && \
-             sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                -keyout /opt/jfrog/artifactory/var/etc/security/jfrog.key \
-                -out /opt/jfrog/artifactory/var/etc/security/jfrog.crt \
-                -subj '/CN=jfrog.${DOMAIN}' && \
-             sudo chown 1030:1030 /opt/jfrog/artifactory/var/etc/security/*"
+    # Configure second NIC if dual-NIC mode
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "[INFO] Configuring isolated network interface..."
+        ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<EOF
+# Find second NIC
+SECOND_NIC=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | tail -1)
+if [ -n "\$SECOND_NIC" ]; then
+    echo "Configuring \$SECOND_NIC with IP ${ISOLATED_IP}"
+    nmcli con add type ethernet con-name isolated ifname \$SECOND_NIC ip4 ${ISOLATED_IP}/24 gw4 ${ISOLATED_GATEWAY} || true
+    nmcli con up isolated || true
+    echo "[OK] Isolated network configured"
+else
+    echo "[WARN] Second NIC not found"
+fi
+EOF
     fi
     
-    # Create system.yaml for Artifactory
-    ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
-        "cat << 'EOF' | sudo tee /opt/jfrog/artifactory/var/etc/system.yaml
+    # Configure JFrog Artifactory
+    echo "[INFO] Configuring JFrog Artifactory on VM..."
+    
+    # Install JFrog using Podman
+    ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<EOF
+echo "[INFO] Setting up JFrog Artifactory ${JFROG_EDITION} v${JFROG_VERSION}..."
+
+# Create directories
+mkdir -p /opt/jfrog/artifactory/var/etc
+mkdir -p /opt/jfrog/artifactory/var/data
+mkdir -p /opt/jfrog/artifactory/var/logs
+chmod -R 777 /opt/jfrog/artifactory/var
+
+# Create system.yaml
+cat > /opt/jfrog/artifactory/var/etc/system.yaml <<YAML
 configVersion: 1
 shared:
-  security:
-    joinKey: \"your-join-key-here\"
+  database:
+    type: derby
   node:
-    id: \"jfrog-node\"
-router:
-  entryPoints:
-    internalPort: 8046
-access:
-  database:
-    type: derby
-artifactory:
-  database:
-    type: derby
+    id: jfrog-node-1
+YAML
+
+# Pull and run JFrog Artifactory
+JFROG_IMAGE="releases-docker.jfrog.io/jfrog/artifactory-${JFROG_EDITION}:${JFROG_VERSION}"
+echo "[INFO] Pulling \$JFROG_IMAGE..."
+podman pull \$JFROG_IMAGE
+
+echo "[INFO] Starting JFrog Artifactory container..."
+podman run -d --name artifactory \
+    -p 8081:8081 \
+    -p 8082:8082 \
+    -v /opt/jfrog/artifactory/var:/var/opt/jfrog/artifactory:Z \
+    \$JFROG_IMAGE
+
+# Enable firewall ports
+firewall-cmd --permanent --add-port=8081/tcp || true
+firewall-cmd --permanent --add-port=8082/tcp || true
+firewall-cmd --reload || true
+
+echo "[OK] JFrog Artifactory started"
 EOF
-sudo chown 1030:1030 /opt/jfrog/artifactory/var/etc/system.yaml"
-    
-    # Run Artifactory container
-    echo "[INFO] Starting JFrog Artifactory container..."
-    if [ "$JFROG_EDITION" == "oss" ]; then
-        JFROG_IMAGE="releases-docker.jfrog.io/jfrog/artifactory-oss:${JFROG_VERSION}"
-    else
-        JFROG_IMAGE="releases-docker.jfrog.io/jfrog/artifactory-pro:${JFROG_VERSION}"
+
+    # Configure TLS certificates if step-ca mode
+    if [ "$CERT_MODE" == "step-ca" ]; then
+        echo "[INFO] Configuring Step-CA certificates..."
+        STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
+        
+        ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<EOF
+# Install step CLI
+wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm -O /tmp/step-cli.rpm
+rpm -i /tmp/step-cli.rpm || rpm -U /tmp/step-cli.rpm || true
+
+# Bootstrap step-ca
+step ca bootstrap --ca-url ${CA_URL} --fingerprint ${FINGERPRINT} --install
+
+# Get certificate
+TOKEN=\$(ssh -o StrictHostKeyChecking=no cloud-user@${STEP_CA_IP} \
+    'sudo step ca token jfrog.${DOMAIN} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner admin@example.com' | tail -1)
+
+step ca certificate jfrog.${DOMAIN} /opt/jfrog/certs/jfrog.crt /opt/jfrog/certs/jfrog.key --ca-url ${CA_URL} --token "\$TOKEN" --force
+
+echo "[OK] Step-CA certificates configured"
+EOF
     fi
-    
-    ssh -o StrictHostKeyChecking=no ${LOGIN_USER}@${IP} \
-        "sudo podman run -d --name artifactory \
-            -p 8081:8081 -p 8082:8082 \
-            -v /opt/jfrog/artifactory/var:/var/opt/jfrog/artifactory:Z \
-            --restart=always \
-            ${JFROG_IMAGE}" || \
-        echo "[WARN] Container may need manual configuration"
-    
-    # Wait for Artifactory to start
-    echo "[INFO] Waiting for Artifactory to start (this may take 2-3 minutes)..."
-    sleep 120
     
     echo ""
     echo "========================================"
     echo "JFrog Artifactory Deployment Complete"
     echo "========================================"
     echo "VM Name: ${VM_NAME}"
-    echo "IP Address: ${IP}"
-    echo "Artifactory URL: http://${IP}:8082/artifactory"
-    echo "UI URL: http://${IP}:8082/ui"
+    echo "Primary IP (management): ${IP}"
+    if [ -n "${ISOLATED_NET_NAME}" ] && [ -n "${ISOLATED_IP}" ]; then
+        echo "Isolated IP (disconnected): ${ISOLATED_IP}"
+    fi
+    echo "JFrog URL: http://${IP}:8082"
+    echo "JFrog Edition: ${JFROG_EDITION}"
     echo ""
     echo "Default credentials:"
     echo "  User: admin"
@@ -297,29 +342,24 @@ function check_health() {
     
     echo "VM IP: ${IP}"
     
-    # Check Artifactory ping endpoint
+    # Check JFrog health endpoint
     echo ""
-    echo "Artifactory Health Check:"
-    PING=$(curl -s "http://${IP}:8082/artifactory/api/system/ping" 2>/dev/null)
+    echo "JFrog Artifactory Health Check:"
+    HEALTH=$(curl -s "http://${IP}:8082/artifactory/api/system/ping" 2>/dev/null)
     
-    if echo "$PING" | grep -qi "OK"; then
-        echo "[OK] Artifactory is HEALTHY"
-        echo "Ping: $PING"
-        
-        # Get system info
-        echo ""
-        echo "System Info:"
-        curl -s "http://${IP}:8082/artifactory/api/system/version" 2>/dev/null | jq . || true
+    if echo "$HEALTH" | grep -qi "OK"; then
+        echo "[OK] JFrog Artifactory is HEALTHY"
+        echo "Response: $HEALTH"
         return 0
     else
-        echo "[WARN] Artifactory may not be healthy"
-        echo "Response: $PING"
+        echo "[WARN] JFrog Artifactory may not be healthy"
+        echo "Response: $HEALTH"
         
         # Check if container is running
         echo ""
         echo "Checking container status..."
-        ssh -o StrictHostKeyChecking=no cloud-user@${IP} \
-            "sudo podman ps --filter name=artifactory 2>/dev/null" || true
+        ssh -o StrictHostKeyChecking=no root@${IP} \
+            "podman ps --filter name=artifactory 2>/dev/null" || true
         return 1
     fi
 }
@@ -364,4 +404,3 @@ case "${ACTION}" in
         exit 1
         ;;
 esac
-
