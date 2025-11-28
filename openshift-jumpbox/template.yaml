@@ -3,18 +3,63 @@ numcpus: {{ numcpus }}
 memory: {{ memory }}
 nets:
   - name: {{ net_name }}
+{% if isolated_net_name %}
+  - name: {{ isolated_net_name }}
+    nic: eth1
+{% if isolated_ip %}
+    ip: {{ isolated_ip }}
+    mask: 255.255.255.0
+{% endif %}
+{% if isolated_gateway %}
+    gateway: {{ isolated_gateway }}
+{% endif %}
+{% endif %}
 disks:
   - size: {{ disk_size }}
 cmds:
-  - nmcli connection modify  "cloud-init eth0"  ipv4.dns {{ reservedns }}
-  - nmcli connection down "cloud-init eth0" && sudo nmcli connection up "cloud-init eth0"
+  # Configure DNS on primary interface (handles both eth0 and ens naming)
+  - |
+    CONN=$(nmcli -t -f NAME connection show --active | head -1)
+    if [ -n "$CONN" ]; then
+      nmcli connection modify "$CONN" ipv4.dns {{ reservedns }}
+      nmcli connection down "$CONN" && nmcli connection up "$CONN"
+    fi
+  # Set root password and create user
   - echo {{ user_password }} | passwd --stdin root
-  - useradd {{ user }}
+  - useradd {{ user }} || true
   - usermod -aG wheel {{ user }}
   - echo "{{ user }} ALL=(root) NOPASSWD:ALL" | tee -a /etc/sudoers.d/{{ user }}
   - echo {{ user_password }} | passwd --stdin {{ user }}
+{% if isolated_net_name and isolated_ip %}
+  # Configure second NIC for isolated network (handles ens naming on Fedora)
+  - |
+    SECOND_NIC=$(ip link | grep -E "ens4|eth1|enp0s4" | head -1 | awk -F: '{print $2}' | tr -d ' ')
+    if [ -n "$SECOND_NIC" ]; then
+      nmcli con add type ethernet con-name isolated ifname $SECOND_NIC ip4 {{ isolated_ip }}/24 gw4 {{ isolated_gateway }}
+      nmcli con up isolated
+    fi
+{% endif %}
+  # Update system
   - sudo dnf update -y
-  - dnf install git vim unzip wget tar python3 python3-pip util-linux-user tmux bind-utils -y 
+  # Install base tools
+  - dnf install git vim unzip wget tar python3 python3-pip util-linux-user tmux bind-utils podman -y 
+{% if install_gui %}
+  # Install GNOME Workstation GUI
+  - dnf groupinstall -y "Workstation" --skip-broken || dnf groupinstall -y "GNOME Desktop Environment" --skip-broken || echo "GUI install completed"
+  - systemctl set-default graphical.target
+  # Install VNC server and browser
+  - dnf install -y tigervnc-server firefox || true
+  # Configure VNC for user
+  - |
+    mkdir -p /home/{{ user }}/.vnc
+    echo "{{ user_password }}" | vncpasswd -f > /home/{{ user }}/.vnc/passwd
+    chmod 600 /home/{{ user }}/.vnc/passwd
+    chown -R {{ user }}:{{ user }} /home/{{ user }}/.vnc
+  # Configure firewall for VNC
+  - firewall-cmd --permanent --add-port=5901/tcp || true
+  - firewall-cmd --reload || true
+{% endif %}
+  # Install OpenShift/Kubernetes tools
   - mkdir -p /opt/scripts 
   - cd /opt/scripts && curl -OL https://raw.githubusercontent.com/tosin2013/openshift-4-deployment-notes/master/aws/configure-aws-cli.sh && chmod +x configure-aws-cli.sh 
   - cd /tmp/ && curl -OL https://raw.githubusercontent.com/tosin2013/openshift-4-deployment-notes/master/pre-steps/configure-openshift-packages.sh
@@ -25,8 +70,11 @@ cmds:
   - echo $OFFLINE_TOKEN > /home/{{ user }}/offline_token
 {% endif %}
   - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-  - cd /tmp/ &&  curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash && sudo mv kustomize /usr/local/bin/
-  - sudo chown fedora -R /home/fedora/
+  - cd /tmp/ && curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash && sudo mv kustomize /usr/local/bin/
+  # Install step CLI for certificate management
+  - wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm -O /tmp/step-cli.rpm && rpm -i /tmp/step-cli.rpm || rpm -U /tmp/step-cli.rpm || true
+  # Set ownership
+  - sudo chown {{ user }} -R /home/{{ user }}/
 files:
   - path: /root/pull-secret.json
     origin: ~/.generated/vmfiles/pull-secret.json
