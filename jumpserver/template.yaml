@@ -1,0 +1,136 @@
+# Jumpserver VM Template with GUI Desktop
+# Supports RHEL9 and CentOS9 Stream with GNOME desktop
+#
+# This template creates a jumpserver/bastion host with:
+# - GNOME Desktop Environment
+# - Development tools (git, vim, etc.)
+# - Container tools (podman)
+# - OpenShift/Kubernetes CLI tools
+# - Remote desktop access (VNC/RDP)
+
+image: {{ image }}
+numcpus: {{ numcpus }}
+memory: {{ memory }}
+nets:
+  - name: {{ net_name }}
+disks:
+  - size: {{ disk_size }}
+cmds:
+  # Determine network interface and configure DNS
+  - |
+    CONN=$(nmcli -t -f NAME connection show --active | head -1)
+    if [ -n "$CONN" ]; then
+      nmcli connection modify "$CONN" ipv4.dns {{ reservedns }}
+      nmcli connection down "$CONN" && nmcli connection up "$CONN"
+    fi
+  
+  # Set root password and create user
+  - echo {{ user_password }} | passwd --stdin root
+  - useradd {{ user }} || true
+  - usermod -aG wheel {{ user }}
+  - echo "{{ user }} ALL=(root) NOPASSWD:ALL" | tee -a /etc/sudoers.d/{{ user }}
+  - echo {{ user_password }} | passwd --stdin {{ user }}
+  
+  # Update system
+  - dnf update -y
+  
+  # Install GNOME Desktop Environment
+  - dnf groupinstall -y "Server with GUI" --skip-broken || dnf groupinstall -y "Workstation" --skip-broken
+  - systemctl set-default graphical.target
+  
+  # Install development and admin tools
+  - dnf install -y git vim unzip wget tar curl jq tmux bind-utils net-tools
+  - dnf install -y python3 python3-pip python3-devel gcc make
+  - dnf install -y podman podman-compose skopeo buildah
+  - dnf install -y bash-completion htop tree
+  
+  # Install remote desktop (VNC and xrdp for RDP)
+  - dnf install -y tigervnc-server xrdp || true
+  - systemctl enable xrdp || true
+  
+  # Install web browser
+  - dnf install -y firefox || true
+  
+  # Configure firewall for remote desktop
+  - systemctl enable --now firewalld
+  - firewall-cmd --permanent --add-service=vnc-server || true
+  - firewall-cmd --permanent --add-port=3389/tcp || true
+  - firewall-cmd --permanent --add-port=5901/tcp || true
+  - firewall-cmd --reload
+  
+  # Install OpenShift CLI tools
+  - |
+    cd /tmp
+    curl -OL https://raw.githubusercontent.com/tosin2013/openshift-4-deployment-notes/master/pre-steps/configure-openshift-packages.sh
+    chmod +x configure-openshift-packages.sh
+    ./configure-openshift-packages.sh -i || echo "OpenShift packages install completed with warnings"
+  
+  # Install kubectl
+  - |
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    chmod +x kubectl
+    mv kubectl /usr/local/bin/
+  
+  # Install helm
+  - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash || true
+  
+  # Install kustomize
+  - |
+    cd /tmp
+    curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+    mv kustomize /usr/local/bin/ || true
+  
+  # Install step CLI for certificate management
+  - |
+    wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm -O /tmp/step-cli.rpm
+    rpm -i /tmp/step-cli.rpm || rpm -U /tmp/step-cli.rpm || true
+  
+  # Configure VNC for the user
+  - |
+    mkdir -p /home/{{ user }}/.vnc
+    echo "{{ user_password }}" | vncpasswd -f > /home/{{ user }}/.vnc/passwd
+    chmod 600 /home/{{ user }}/.vnc/passwd
+    chown -R {{ user }}:{{ user }} /home/{{ user }}/.vnc
+  
+  # Create VNC systemd service for user
+  - |
+    cat > /etc/systemd/system/vncserver@.service << 'VNCSERVICE'
+    [Unit]
+    Description=Remote desktop service (VNC)
+    After=syslog.target network.target
+
+    [Service]
+    Type=simple
+    User=%i
+    PAMName=login
+    PIDFile=/home/%i/.vnc/%H%i.pid
+    ExecStartPre=/bin/sh -c '/usr/bin/vncserver -kill :%i > /dev/null 2>&1 || :'
+    ExecStart=/usr/bin/vncserver :%i -geometry 1920x1080 -depth 24
+    ExecStop=/usr/bin/vncserver -kill :%i
+
+    [Install]
+    WantedBy=multi-user.target
+    VNCSERVICE
+    systemctl daemon-reload
+    systemctl enable vncserver@1.service || true
+  
+  # Set ownership
+  - chown -R {{ user }}:{{ user }} /home/{{ user }}/
+  
+  # Final message
+  - |
+    echo "========================================"
+    echo "Jumpserver Setup Complete"
+    echo "========================================"
+    echo "User: {{ user }}"
+    echo "VNC Port: 5901"
+    echo "RDP Port: 3389"
+    echo "========================================"
+
+{% if offline_token %}
+files:
+  - path: /root/offline_token
+    content: {{ offline_token }}
+  - path: /home/{{ user }}/offline_token
+    content: {{ offline_token }}
+{% endif %}

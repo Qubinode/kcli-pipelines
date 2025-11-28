@@ -1,0 +1,34 @@
+# Jumpserver VM Variables
+# These are example values - actual values come from vault and all.yml
+
+# VM Image (rhel9 or centos9stream)
+image: centos9stream
+
+# Login user
+user: cloud-user
+
+# User password (should come from vault)
+user_password: changeme
+
+# Disk size in GB (GUI needs more space)
+disk_size: 100
+
+# CPU and Memory (GUI needs more resources)
+numcpus: 4
+memory: 16384
+
+# Network
+net_name: default
+
+# DNS server (typically FreeIPA)
+reservedns: 192.168.122.161
+
+# Domain
+domainname: example.com
+
+# Red Hat subscription (for RHEL only)
+rhnorg: your-org-id
+rhnactivationkey: your-activation-key
+
+# Offline token for OpenShift downloads (optional)
+offline_token: ""
