@@ -124,6 +124,38 @@ def decide_operation(**context):
     return 'get_ca_info'
 
 
+# Task: Ensure step CLI is installed on host
+ensure_step_cli = BashOperator(
+    task_id='ensure_step_cli',
+    bash_command='''
+    export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
+    echo "========================================"
+    echo "Ensuring step CLI is installed on host"
+    echo "========================================"
+    
+    # Check if step CLI is installed on host
+    if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "which step" &>/dev/null; then
+        echo "[OK] step CLI is already installed"
+        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost "step version"
+    else
+        echo "[INFO] Installing step CLI on host..."
+        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm -O /tmp/step-cli_amd64.rpm && \
+             rpm -i /tmp/step-cli_amd64.rpm 2>/dev/null || rpm -U /tmp/step-cli_amd64.rpm && \
+             step version"
+        
+        if [ $? -eq 0 ]; then
+            echo "[OK] step CLI installed successfully"
+        else
+            echo "[ERROR] Failed to install step CLI"
+            exit 1
+        fi
+    fi
+    ''',
+    dag=dag,
+)
+
 # Task: Decide operation
 decide_operation_task = BranchPythonOperator(
     task_id='decide_operation',
@@ -141,14 +173,6 @@ get_ca_info = BashOperator(
     echo "========================================"
     
     CA_URL="{{ params.ca_url }}"
-    
-    # Check if step CLI is installed on host
-    if ! ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "which step" &>/dev/null; then
-        echo "[ERROR] step CLI not installed on host"
-        echo "Install with: wget https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm && rpm -i step-cli_amd64.rpm"
-        exit 1
-    fi
     
     # Get CA health
     echo ""
@@ -414,4 +438,5 @@ bootstrap_client = BashOperator(
 )
 
 # Define task dependencies
-decide_operation_task >> [get_ca_info, request_certificate, renew_certificate, revoke_certificate, bootstrap_client]
+# First ensure step CLI is installed, then decide operation, then run the selected operation
+ensure_step_cli >> decide_operation_task >> [get_ca_info, request_certificate, renew_certificate, revoke_certificate, bootstrap_client]
