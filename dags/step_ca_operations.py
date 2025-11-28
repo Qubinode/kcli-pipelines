@@ -215,92 +215,62 @@ request_certificate = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Requesting Certificate"
+    echo "Certificate Request Instructions"
     echo "========================================"
     
     CA_URL="{{ params.ca_url }}"
     COMMON_NAME="{{ params.common_name }}"
     SAN_LIST="{{ params.san_list }}"
-    DURATION="{{ params.duration }}"
     OUTPUT_PATH="{{ params.output_path }}"
-    PROVISIONER="{{ params.provisioner }}"
     
     if [ -z "$COMMON_NAME" ]; then
         echo "[ERROR] common_name parameter is required"
         exit 1
     fi
     
-    echo "Common Name: $COMMON_NAME"
-    echo "SANs: $SAN_LIST"
-    echo "Duration: $DURATION"
-    echo "Output Path: $OUTPUT_PATH"
-    echo "Provisioner: $PROVISIONER"
+    # Get Step-CA VM IP from CA URL
+    STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
     
-    # Build SAN arguments
-    SAN_ARGS=""
+    echo ""
+    echo "To request a certificate for: $COMMON_NAME"
+    echo ""
+    echo "Step 1: SSH to the Qubinode host and run:"
+    echo "========================================"
+    echo ""
+    echo "# Get a token from Step-CA"
+    echo "TOKEN=\\$(ssh cloud-user@${STEP_CA_IP} \"sudo step ca token ${COMMON_NAME} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner 'admin@example.com'\" | tail -1)"
+    echo ""
+    echo "# Request the certificate"
+    echo "mkdir -p ${OUTPUT_PATH}"
     if [ -n "$SAN_LIST" ]; then
+        SAN_ARGS=""
         IFS=',' read -ra SANS <<< "$SAN_LIST"
         for san in "${SANS[@]}"; do
             SAN_ARGS="$SAN_ARGS --san $san"
         done
-    fi
-    
-    # Get Step-CA VM IP from CA URL
-    STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
-    echo "Step-CA IP: $STEP_CA_IP"
-    
-    # Create a script on the host and execute it
-    echo "[INFO] Requesting certificate via token..."
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "cat > /tmp/request_cert.sh << 'SCRIPT'
-#!/bin/bash
-set -e
-STEP_CA_IP=\"\$1\"
-CA_URL=\"\$2\"
-COMMON_NAME=\"\$3\"
-OUTPUT_PATH=\"\$4\"
-SAN_ARGS=\"\$5\"
-
-echo \"[INFO] Getting certificate token from CA...\"
-TOKEN=\$(ssh -o StrictHostKeyChecking=no cloud-user@\${STEP_CA_IP} \\
-    \"sudo step ca token \${COMMON_NAME} --ca-url https://localhost:443 \\
-     --password-file /etc/step/initial_password --provisioner 'admin@example.com'\" 2>/dev/null | tail -1)
-
-if [ -z \"\$TOKEN\" ]; then
-    echo \"[ERROR] Failed to get certificate token\"
-    exit 1
-fi
-echo \"[OK] Got certificate token\"
-
-mkdir -p \${OUTPUT_PATH}
-step ca certificate \${COMMON_NAME} \\
-    \${OUTPUT_PATH}/\${COMMON_NAME}.crt \\
-    \${OUTPUT_PATH}/\${COMMON_NAME}.key \\
-    --ca-url \${CA_URL} \\
-    --token \"\$TOKEN\" \\
-    \${SAN_ARGS} \\
-    --force
-SCRIPT
-chmod +x /tmp/request_cert.sh
-/tmp/request_cert.sh '${STEP_CA_IP}' '${CA_URL}' '${COMMON_NAME}' '${OUTPUT_PATH}' '${SAN_ARGS}'"
-    
-    if [ $? -eq 0 ]; then
-        echo ""
-        echo "========================================"
-        echo "[OK] Certificate Generated"
-        echo "========================================"
-        echo "Certificate: ${OUTPUT_PATH}/${COMMON_NAME}.crt"
-        echo "Private Key: ${OUTPUT_PATH}/${COMMON_NAME}.key"
-        echo ""
-        echo "Certificate Details:"
-        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "step certificate inspect --short ${OUTPUT_PATH}/${COMMON_NAME}.crt"
+        echo "step ca certificate ${COMMON_NAME} ${OUTPUT_PATH}/${COMMON_NAME}.crt ${OUTPUT_PATH}/${COMMON_NAME}.key --ca-url ${CA_URL} --token \"\\$TOKEN\" ${SAN_ARGS} --force"
     else
-        echo "[ERROR] Certificate request failed"
-        exit 1
+        echo "step ca certificate ${COMMON_NAME} ${OUTPUT_PATH}/${COMMON_NAME}.crt ${OUTPUT_PATH}/${COMMON_NAME}.key --ca-url ${CA_URL} --token \"\\$TOKEN\" --force"
     fi
+    echo ""
+    echo "========================================"
+    echo ""
+    echo "Or use the helper script (if available):"
+    echo "  /tmp/request_cert.sh '${STEP_CA_IP}' '${CA_URL}' '${COMMON_NAME}' '${OUTPUT_PATH}' '${SAN_ARGS:-}'"
+    echo ""
+    echo "========================================"
+    echo "Quick One-Liner (run on Qubinode host):"
+    echo "========================================"
+    echo ""
+    echo "TOKEN=\\$(ssh cloud-user@${STEP_CA_IP} \"sudo step ca token ${COMMON_NAME} --ca-url https://localhost:443 --password-file /etc/step/initial_password --provisioner 'admin@example.com'\" | tail -1) && step ca certificate ${COMMON_NAME} ${OUTPUT_PATH}/${COMMON_NAME}.crt ${OUTPUT_PATH}/${COMMON_NAME}.key --ca-url ${CA_URL} --token \"\\$TOKEN\" --force"
+    echo ""
+    echo "========================================"
+    echo "Certificate will be saved to:"
+    echo "  Certificate: ${OUTPUT_PATH}/${COMMON_NAME}.crt"
+    echo "  Private Key: ${OUTPUT_PATH}/${COMMON_NAME}.key"
+    echo "========================================"
     ''',
-    execution_timeout=timedelta(minutes=5),
+    execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
 
@@ -310,7 +280,7 @@ renew_certificate = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Renewing Certificate"
+    echo "Certificate Renewal Instructions"
     echo "========================================"
     
     CERT_PATH="{{ params.cert_path }}"
@@ -318,36 +288,27 @@ renew_certificate = BashOperator(
     
     if [ -z "$CERT_PATH" ] || [ -z "$KEY_PATH" ]; then
         echo "[ERROR] cert_path and key_path parameters are required"
-        exit 1
-    fi
-    
-    echo "Certificate: $CERT_PATH"
-    echo "Private Key: $KEY_PATH"
-    
-    # Check certificate expiry
-    echo ""
-    echo "Current Certificate:"
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "step certificate inspect --short ${CERT_PATH}"
-    
-    # Renew certificate
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "step ca renew --force ${CERT_PATH} ${KEY_PATH}"
-    
-    if [ $? -eq 0 ]; then
         echo ""
-        echo "========================================"
-        echo "[OK] Certificate Renewed"
-        echo "========================================"
-        echo "New Certificate Details:"
-        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "step certificate inspect --short ${CERT_PATH}"
-    else
-        echo "[ERROR] Certificate renewal failed"
+        echo "Example usage:"
+        echo '  {"operation": "renew_certificate", "cert_path": "/tmp/certs/myservice.crt", "key_path": "/tmp/certs/myservice.key"}'
         exit 1
     fi
+    
+    echo ""
+    echo "To renew certificate: $CERT_PATH"
+    echo ""
+    echo "Run on Qubinode host:"
+    echo "========================================"
+    echo ""
+    echo "# Check current certificate expiry"
+    echo "step certificate inspect --short ${CERT_PATH}"
+    echo ""
+    echo "# Renew the certificate"
+    echo "step ca renew --force ${CERT_PATH} ${KEY_PATH}"
+    echo ""
+    echo "========================================"
     ''',
-    execution_timeout=timedelta(minutes=5),
+    execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
 
@@ -357,7 +318,7 @@ revoke_certificate = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Revoking Certificate"
+    echo "Certificate Revocation Instructions"
     echo "========================================"
     
     CERT_PATH="{{ params.cert_path }}"
@@ -365,32 +326,30 @@ revoke_certificate = BashOperator(
     
     if [ -z "$CERT_PATH" ]; then
         echo "[ERROR] cert_path parameter is required"
-        exit 1
-    fi
-    
-    echo "Certificate: $CERT_PATH"
-    
-    # Show certificate details before revocation
-    echo ""
-    echo "Certificate to Revoke:"
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "step certificate inspect --short ${CERT_PATH}"
-    
-    # Revoke certificate
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "step ca revoke --cert ${CERT_PATH} --ca-url ${CA_URL}"
-    
-    if [ $? -eq 0 ]; then
         echo ""
-        echo "========================================"
-        echo "[OK] Certificate Revoked"
-        echo "========================================"
-    else
-        echo "[ERROR] Certificate revocation failed"
+        echo "Example usage:"
+        echo '  {"operation": "revoke_certificate", "cert_path": "/tmp/certs/myservice.crt", "ca_url": "https://step-ca:443"}'
         exit 1
     fi
+    
+    echo ""
+    echo "To revoke certificate: $CERT_PATH"
+    echo ""
+    echo "Run on Qubinode host:"
+    echo "========================================"
+    echo ""
+    echo "# View certificate details first"
+    echo "step certificate inspect --short ${CERT_PATH}"
+    echo ""
+    echo "# Revoke the certificate"
+    echo "step ca revoke --cert ${CERT_PATH} --ca-url ${CA_URL}"
+    echo ""
+    echo "========================================"
+    echo ""
+    echo "WARNING: Certificate revocation is permanent!"
+    echo "========================================"
     ''',
-    execution_timeout=timedelta(minutes=5),
+    execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
 
@@ -400,67 +359,63 @@ bootstrap_client = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Bootstrapping Client"
+    echo "Client Bootstrap Instructions"
     echo "========================================"
     
     CA_URL="{{ params.ca_url }}"
     TARGET_HOST="{{ params.target_host }}"
     
-    if [ -z "$TARGET_HOST" ]; then
-        echo "No target_host specified, bootstrapping localhost"
-        TARGET_HOST="localhost"
-    fi
+    # Get Step-CA VM IP from CA URL
+    STEP_CA_IP=$(echo $CA_URL | sed 's|https://||' | sed 's|:.*||')
     
+    echo ""
     echo "CA URL: $CA_URL"
-    echo "Target Host: $TARGET_HOST"
-    
-    # Get CA fingerprint first
-    echo ""
-    echo "Getting CA fingerprint..."
-    FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "curl -sk ${CA_URL}/roots.pem | step certificate fingerprint /dev/stdin" 2>/dev/null)
-    
-    if [ -z "$FINGERPRINT" ]; then
-        echo "[ERROR] Could not get CA fingerprint"
-        exit 1
+    echo "Step-CA IP: $STEP_CA_IP"
+    if [ -n "$TARGET_HOST" ]; then
+        echo "Target Host: $TARGET_HOST"
     fi
     
-    echo "CA Fingerprint: $FINGERPRINT"
-    
-    # Bootstrap target host
     echo ""
-    echo "Bootstrapping ${TARGET_HOST}..."
+    echo "Step 1: Get the CA fingerprint"
+    echo "========================================"
+    echo ""
+    echo "# From the Qubinode host:"
+    echo "FINGERPRINT=\\$(ssh cloud-user@${STEP_CA_IP} 'sudo step certificate fingerprint /root/.step/certs/root_ca.crt')"
+    echo ""
+    echo "# Or from the CA URL:"
+    echo "FINGERPRINT=\\$(curl -sk ${CA_URL}/roots.pem | step certificate fingerprint /dev/stdin)"
+    echo ""
     
-    if [ "$TARGET_HOST" = "localhost" ]; then
-        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "step ca bootstrap --ca-url ${CA_URL} --fingerprint ${FINGERPRINT} --install"
-    else
-        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "ssh -o StrictHostKeyChecking=no ${TARGET_HOST} '\
-                # Install step CLI if not present
-                if ! command -v step &>/dev/null; then
-                    wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm
-                    sudo rpm -i step-cli_amd64.rpm
-                fi
-                # Bootstrap CA
-                step ca bootstrap --ca-url ${CA_URL} --fingerprint ${FINGERPRINT} --install
-            '"
-    fi
-    
-    if [ $? -eq 0 ]; then
+    echo "Step 2: Bootstrap the client"
+    echo "========================================"
+    echo ""
+    if [ -n "$TARGET_HOST" ] && [ "$TARGET_HOST" != "localhost" ]; then
+        echo "# On the target host (${TARGET_HOST}):"
         echo ""
-        echo "========================================"
-        echo "[OK] Client Bootstrapped"
-        echo "========================================"
-        echo "Host ${TARGET_HOST} now trusts the CA"
-        echo "You can now request certificates with:"
-        echo "  step ca certificate <hostname> cert.crt key.key"
+        echo "# First install step CLI if not present:"
+        echo "wget -q https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.rpm && sudo rpm -i step-cli_amd64.rpm"
+        echo ""
+        echo "# Then bootstrap:"
+        echo "step ca bootstrap --ca-url ${CA_URL} --fingerprint \\$FINGERPRINT --install"
     else
-        echo "[ERROR] Bootstrap failed"
-        exit 1
+        echo "# On the Qubinode host (localhost):"
+        echo "step ca bootstrap --ca-url ${CA_URL} --fingerprint \\$FINGERPRINT --install"
     fi
+    echo ""
+    
+    echo "========================================"
+    echo "Quick One-Liner (run on target host):"
+    echo "========================================"
+    echo ""
+    echo "FINGERPRINT=\\$(curl -sk ${CA_URL}/roots.pem | step certificate fingerprint /dev/stdin) && step ca bootstrap --ca-url ${CA_URL} --fingerprint \\$FINGERPRINT --install"
+    echo ""
+    echo "========================================"
+    echo ""
+    echo "After bootstrapping, you can request certificates with:"
+    echo "  step ca certificate <hostname> cert.crt key.key"
+    echo "========================================"
     ''',
-    execution_timeout=timedelta(minutes=10),
+    execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
 
