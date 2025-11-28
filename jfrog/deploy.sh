@@ -247,12 +247,10 @@ EOF
     ssh -o StrictHostKeyChecking=no root@${IP} bash -s <<EOF
 echo "[INFO] Setting up JFrog Artifactory ${JFROG_EDITION} v${JFROG_VERSION}..."
 
-# Create directories with correct ownership (JFrog runs as UID 1030)
+# Create directories
 mkdir -p /opt/jfrog/artifactory/var/etc
 mkdir -p /opt/jfrog/artifactory/var/data
 mkdir -p /opt/jfrog/artifactory/var/logs
-chown -R 1030:1030 /opt/jfrog/artifactory/var
-chmod -R 755 /opt/jfrog/artifactory/var
 
 # Create system.yaml
 cat > /opt/jfrog/artifactory/var/etc/system.yaml <<YAML
@@ -263,6 +261,10 @@ shared:
   node:
     id: jfrog-node-1
 YAML
+
+# Fix ownership AFTER creating all files (JFrog runs as UID 1030)
+chown -R 1030:1030 /opt/jfrog/artifactory/var
+chmod -R 755 /opt/jfrog/artifactory/var
 
 # Pull and run JFrog Artifactory
 JFROG_IMAGE="releases-docker.jfrog.io/jfrog/artifactory-${JFROG_EDITION}:${JFROG_VERSION}"
