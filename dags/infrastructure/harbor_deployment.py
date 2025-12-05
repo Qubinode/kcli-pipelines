@@ -1,6 +1,6 @@
 """
 Airflow DAG: Harbor Registry Deployment
-kcli-pipelines integration per ADR-0047
+qubinode-pipelines integration per ADR-0047
 
 This DAG deploys Harbor container registry for:
 - Enterprise container image management
@@ -40,7 +40,7 @@ dag = DAG(
     description='Deploy Harbor enterprise container registry',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'harbor', 'registry', 'enterprise'],
+    tags=['qubinode', 'qubinode-pipelines', 'harbor', 'registry', 'enterprise'],
     params={
         'action': 'create',  # create, delete, status, health
         'vm_name': 'harbor',  # VM name

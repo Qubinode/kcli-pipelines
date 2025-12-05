@@ -35,7 +35,7 @@ dag = DAG(
     description='Deploy Jumpserver with GUI Desktop (GNOME)',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'jumpserver', 'gui', 'bastion'],
+    tags=['qubinode', 'qubinode-pipelines', 'jumpserver', 'gui', 'bastion'],
     params={
         'action': 'create',  # create, delete, status
         'vm_name': 'jumpserver',

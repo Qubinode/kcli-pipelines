@@ -101,7 +101,7 @@ function setup_certificate_authority() {
     # Configure and start systemd service
     echo "[INFO] Configuring systemd service..."
     cd /tmp
-    curl -OL https://raw.githubusercontent.com/tosin2013/kcli-pipelines/main/step-ca-server/step-ca-service.sh
+    curl -OL https://raw.githubusercontent.com/Qubinode/qubinode-pipelines/main/scripts/step-ca-server/step-ca-service.sh
     chmod +x step-ca-service.sh
     sudo ./step-ca-service.sh
     

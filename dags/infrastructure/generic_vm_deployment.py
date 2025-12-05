@@ -1,6 +1,6 @@
 """
 Airflow DAG: Generic VM Deployment
-kcli-pipelines integration per ADR-0047
+qubinode-pipelines integration per ADR-0047
 
 This DAG deploys VMs using kcli profiles. Supports:
 - RHEL 8/9
@@ -37,7 +37,7 @@ dag = DAG(
     description='Deploy VMs using kcli profiles (RHEL, Fedora, Ubuntu, etc.)',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'vm', 'infrastructure'],
+    tags=['qubinode', 'qubinode-pipelines', 'vm', 'infrastructure'],
     params={
         'action': 'create',  # create, delete, status
         'vm_profile': 'rhel9',  # VM profile to deploy
@@ -194,7 +194,7 @@ create_vm = BashOperator(
     bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Creating VM via kcli-pipelines"
+    echo "Creating VM via qubinode-pipelines"
     echo "========================================"
     
     VM_PROFILE="{{ params.vm_profile }}"
@@ -220,7 +220,7 @@ create_vm = BashOperator(
     fi
     
     # Execute deploy-vm.sh on host via SSH (ADR-0047)
-    echo "Calling kcli-pipelines/deploy-vm.sh..."
+    echo "Calling qubinode-pipelines/deploy-vm.sh..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
          export VM_PROFILE=$VM_PROFILE && \

@@ -21,6 +21,6 @@
     - systemctl enable --now firewalld
     - firewall-cmd --permanent --add-port=443/tcp
     - firewall-cmd --reload
-    - cd /tmp/ && curl -OL https://raw.githubusercontent.com/tosin2013/kcli-pipelines/main/step-ca-server/configure-step-ca-local.sh
+    - cd /tmp/ && curl -OL https://raw.githubusercontent.com/Qubinode/qubinode-pipelines/main/scripts/step-ca-server/configure-step-ca-local.sh
     - echo "{{ initial_password }}" > /tmp/initial_password || exit $?
     - chmod +x /tmp/configure-step-ca-local.sh && bash -x /tmp/configure-step-ca-local.sh {{ domainname }} {{ freeipa_dns }} 2>&1 | tee -a /tmp/install-step-ca.log

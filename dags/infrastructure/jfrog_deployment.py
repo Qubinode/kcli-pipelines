@@ -1,6 +1,6 @@
 """
 Airflow DAG: JFrog Artifactory Deployment
-kcli-pipelines integration per ADR-0047
+qubinode-pipelines integration per ADR-0047
 
 This DAG deploys JFrog Artifactory for:
 - Universal artifact repository
@@ -39,7 +39,7 @@ dag = DAG(
     description='Deploy JFrog Artifactory universal artifact repository',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'jfrog', 'artifactory', 'registry'],
+    tags=['qubinode', 'qubinode-pipelines', 'jfrog', 'artifactory', 'registry'],
     params={
         'action': 'create',  # create, delete, status, health
         'vm_name': 'jfrog',  # VM name

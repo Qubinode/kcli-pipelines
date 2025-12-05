@@ -33,7 +33,7 @@ dag = DAG(
     description='Certificate operations using Step-CA (request, renew, revoke)',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'step-ca', 'certificates', 'utility'],
+    tags=['qubinode', 'qubinode-pipelines', 'step-ca', 'certificates', 'utility'],
     params={
         'operation': 'get_ca_info',  # get_ca_info, request_certificate, renew_certificate, revoke_certificate, bootstrap_client
         'ca_url': 'https://step-ca-server.example.com:443',

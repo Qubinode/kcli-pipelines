@@ -1,6 +1,6 @@
 """
 Airflow DAG: Step-CA Certificate Authority Deployment
-kcli-pipelines integration per ADR-0047
+qubinode-pipelines integration per ADR-0047
 
 This DAG deploys a Step-CA certificate authority server for:
 - Disconnected OpenShift installs
@@ -38,7 +38,7 @@ dag = DAG(
     description='Deploy Step-CA certificate authority for disconnected installs',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'step-ca', 'certificates', 'disconnected'],
+    tags=['qubinode', 'qubinode-pipelines', 'step-ca', 'certificates', 'disconnected'],
     params={
         'action': 'create',  # create, delete, status
         'domain': 'example.com',  # Domain for certificates

@@ -9,7 +9,7 @@ This DAG automates the complete deployment of FreeIPA including:
 - DNS configuration
 - Service validation
 
-Follows the kcli-pipelines and freeipa-workshop-deployer patterns.
+Follows the qubinode-pipelines patterns.
 """
 
 from datetime import datetime, timedelta
@@ -35,7 +35,7 @@ dag = DAG(
     description='Deploy FreeIPA Identity Management Server via kcli and Ansible',
     schedule=None,  # Manual trigger only
     catchup=False,
-    tags=['qubinode', 'freeipa', 'identity', 'infrastructure', 'kcli-pipelines'],
+    tags=['qubinode', 'freeipa', 'identity', 'infrastructure', 'qubinode-pipelines'],
     params={
         'action': 'create',  # create or destroy
         'community_version': 'true',  # true for CentOS, false for RHEL

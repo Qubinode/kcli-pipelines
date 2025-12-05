@@ -1,6 +1,6 @@
 """
 Airflow DAG: Mirror-Registry Deployment (Quay-based)
-kcli-pipelines integration per ADR-0047
+qubinode-pipelines integration per ADR-0047
 
 This DAG deploys a Quay-based mirror-registry for:
 - Disconnected OpenShift installs
@@ -37,7 +37,7 @@ dag = DAG(
     description='Deploy Quay-based mirror-registry for disconnected OpenShift installs',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'mirror-registry', 'quay', 'disconnected', 'ocp4-disconnected-helper'],
+    tags=['qubinode', 'qubinode-pipelines', 'mirror-registry', 'quay', 'disconnected', 'ocp4-disconnected-helper'],
     params={
         'action': 'create',  # create, delete, status, health
         'vm_name': 'mirror-registry',  # VM name

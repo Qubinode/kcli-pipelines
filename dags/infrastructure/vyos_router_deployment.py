@@ -39,7 +39,7 @@ dag = DAG(
     description='Deploy VyOS Router for network segmentation via kcli/virsh',
     schedule=None,  # Manual trigger only
     catchup=False,
-    tags=['qubinode', 'vyos', 'router', 'networking', 'infrastructure', 'kcli-pipelines'],
+    tags=['qubinode', 'vyos', 'router', 'networking', 'infrastructure', 'qubinode-pipelines'],
     params={
         'action': 'create',  # create or destroy
         'vyos_version': '2025.11.24-0021-rolling',  # VyOS version (check https://vyos.net/get/nightly-builds/)
@@ -228,14 +228,14 @@ download_vyos = BashOperator(
 )
 
 # Task: Create VyOS VM
-# ADR-0047: Call kcli-pipelines deploy.sh via SSH to host
+# ADR-0047: Call qubinode-pipelines deploy.sh via SSH to host
 create_vyos_vm = BashOperator(
     task_id='create_vyos_vm',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     set -e
     echo "========================================"
-    echo "Creating VyOS Router VM via kcli-pipelines"
+    echo "Creating VyOS Router VM via qubinode-pipelines"
     echo "========================================"
     
     VM_NAME="vyos-router"
@@ -258,8 +258,8 @@ create_vyos_vm = BashOperator(
         exit 0
     fi
     
-    # Execute kcli-pipelines deploy.sh on host via SSH (ADR-0047)
-    echo "Calling kcli-pipelines/vyos-router/deploy.sh..."
+    # Execute qubinode-pipelines deploy.sh on host via SSH (ADR-0047)
+    echo "Calling qubinode-pipelines/vyos-router/deploy.sh..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export ACTION=create && \
          export VYOS_VERSION=$VYOS_VERSION && \
