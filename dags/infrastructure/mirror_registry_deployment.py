@@ -183,7 +183,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Check Step-CA is available (prerequisite)
 check_step_ca = BashOperator(
     task_id='check_step_ca_available',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Checking Step-CA Prerequisite"
@@ -230,7 +230,7 @@ check_step_ca = BashOperator(
     
     echo ""
     echo "[OK] Step-CA prerequisite check complete"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -238,7 +238,7 @@ check_step_ca = BashOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating Mirror-Registry Environment"
@@ -291,7 +291,7 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -299,7 +299,7 @@ validate_environment = BashOperator(
 # Task: Create Mirror-Registry VM
 create_registry = BashOperator(
     task_id='create_registry_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Creating Mirror-Registry VM (Dual-NIC)"
@@ -363,7 +363,7 @@ create_registry = BashOperator(
     
     echo ""
     echo "[OK] Mirror-Registry deployment initiated with dual-NIC"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=45),
     dag=dag,
 )
@@ -372,7 +372,7 @@ create_registry = BashOperator(
 # Task: Wait for Registry VM
 wait_for_registry = BashOperator(
     task_id='wait_for_registry_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for Mirror-Registry VM"
@@ -406,7 +406,7 @@ wait_for_registry = BashOperator(
     done
     
     echo "[WARN] Timeout waiting for Mirror-Registry VM - may still be provisioning"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -415,7 +415,7 @@ wait_for_registry = BashOperator(
 # Task: Validate registry is healthy
 validate_registry_health = BashOperator(
     task_id='validate_registry_health',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating Mirror-Registry Health"
@@ -461,7 +461,7 @@ validate_registry_health = BashOperator(
     echo "[WARN] Registry health check timed out"
     echo "The registry may still be initializing. Check manually:"
     echo "  curl -k https://$IP:8443/health/instance"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -470,7 +470,7 @@ validate_registry_health = BashOperator(
 # Task: Complete deployment
 deployment_complete = BashOperator(
     task_id='deployment_complete',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Mirror-Registry Deployment Complete"
@@ -502,7 +502,7 @@ deployment_complete = BashOperator(
     echo "========================================"
     echo "Mirror-Registry is ready for ocp4-disconnected-helper workflows"
     echo "========================================"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -510,7 +510,7 @@ deployment_complete = BashOperator(
 # Task: Health check (standalone)
 health_check = BashOperator(
     task_id='health_check',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Mirror-Registry Health Check"
@@ -544,7 +544,7 @@ health_check = BashOperator(
         echo "Response: $HEALTH"
         exit 1
     fi
-    ''',
+    """,
     dag=dag,
 )
 
@@ -552,7 +552,7 @@ health_check = BashOperator(
 # Task: Delete Registry
 delete_registry = BashOperator(
     task_id='delete_registry',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Deleting Mirror-Registry"
@@ -571,7 +571,7 @@ delete_registry = BashOperator(
         echo "[WARN] VM may not exist"
     
     echo "[OK] Mirror-Registry deleted"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -580,7 +580,7 @@ delete_registry = BashOperator(
 # Task: Check status
 check_status = BashOperator(
     task_id='check_status',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Mirror-Registry Status"
@@ -602,7 +602,7 @@ check_status = BashOperator(
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "curl -sk https://$IP:8443/health/instance 2>/dev/null" || echo "Health check failed"
     fi
-    ''',
+    """,
     dag=dag,
 )
 
@@ -610,7 +610,7 @@ check_status = BashOperator(
 # DNS Registration task - registers the VM hostname in FreeIPA
 register_dns = BashOperator(
     task_id='register_dns',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Registering DNS in FreeIPA"
@@ -676,7 +676,7 @@ EOF
     else
         echo "[INFO] DNS may need time to propagate"
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )

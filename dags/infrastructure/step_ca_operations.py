@@ -127,7 +127,7 @@ def decide_operation(**context):
 # Task: Ensure step CLI is installed on host
 ensure_step_cli = BashOperator(
     task_id='ensure_step_cli',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Ensuring step CLI is installed on host"
@@ -152,7 +152,7 @@ ensure_step_cli = BashOperator(
             exit 1
         fi
     fi
-    ''',
+    """,
     dag=dag,
 )
 
@@ -166,7 +166,7 @@ decide_operation_task = BranchPythonOperator(
 # Task: Get CA Info
 get_ca_info = BashOperator(
     task_id='get_ca_info',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Step-CA Information"
@@ -205,14 +205,14 @@ get_ca_info = BashOperator(
     echo "========================================"
     echo "CA URL: ${CA_URL}"
     echo "========================================"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Request Certificate
 request_certificate = BashOperator(
     task_id='request_certificate',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Certificate Request Instructions"
@@ -269,7 +269,7 @@ request_certificate = BashOperator(
     echo "  Certificate: ${OUTPUT_PATH}/${COMMON_NAME}.crt"
     echo "  Private Key: ${OUTPUT_PATH}/${COMMON_NAME}.key"
     echo "========================================"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
@@ -277,7 +277,7 @@ request_certificate = BashOperator(
 # Task: Renew Certificate
 renew_certificate = BashOperator(
     task_id='renew_certificate',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Certificate Renewal Instructions"
@@ -307,7 +307,7 @@ renew_certificate = BashOperator(
     echo "step ca renew --force ${CERT_PATH} ${KEY_PATH}"
     echo ""
     echo "========================================"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
@@ -315,7 +315,7 @@ renew_certificate = BashOperator(
 # Task: Revoke Certificate
 revoke_certificate = BashOperator(
     task_id='revoke_certificate',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Certificate Revocation Instructions"
@@ -348,7 +348,7 @@ revoke_certificate = BashOperator(
     echo ""
     echo "WARNING: Certificate revocation is permanent!"
     echo "========================================"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
@@ -356,7 +356,7 @@ revoke_certificate = BashOperator(
 # Task: Bootstrap Client
 bootstrap_client = BashOperator(
     task_id='bootstrap_client',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Client Bootstrap Instructions"
@@ -414,7 +414,7 @@ bootstrap_client = BashOperator(
     echo "After bootstrapping, you can request certificates with:"
     echo "  step ca certificate <hostname> cert.crt key.key"
     echo "========================================"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=2),
     dag=dag,
 )

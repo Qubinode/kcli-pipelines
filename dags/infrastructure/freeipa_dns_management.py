@@ -115,7 +115,7 @@ validate_task = BranchPythonOperator(
 
 add_dns = BashOperator(
     task_id='add_dns_record',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Adding DNS Record to FreeIPA"
@@ -190,7 +190,7 @@ EOF
         echo "[ERROR] Failed to add DNS record"
         exit 1
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )
@@ -198,7 +198,7 @@ EOF
 
 remove_dns = BashOperator(
     task_id='remove_dns_record',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Removing DNS Record from FreeIPA"
@@ -247,7 +247,7 @@ EOF
     else
         echo "[WARN] DNS removal may have failed - check FreeIPA manually"
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )

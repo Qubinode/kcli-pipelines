@@ -74,7 +74,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Validating FreeIPA Deployment Environment"
     echo "========================================"
@@ -139,14 +139,14 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Create FreeIPA VM
 create_freeipa_vm = BashOperator(
     task_id='create_freeipa_vm',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Creating FreeIPA VM"
     echo "========================================"
@@ -195,7 +195,7 @@ create_freeipa_vm = BashOperator(
     echo ""
     echo "[OK] VM created successfully"
     kcli info vm $VM_NAME
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -203,7 +203,7 @@ create_freeipa_vm = BashOperator(
 # Task: Wait for VM and get IP
 wait_for_vm = BashOperator(
     task_id='wait_for_vm',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Waiting for FreeIPA VM to be Ready"
     echo "========================================"
@@ -253,7 +253,7 @@ wait_for_vm = BashOperator(
     
     echo "[ERROR] Failed to get VM IP after $MAX_ATTEMPTS attempts"
     exit 1
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -261,7 +261,7 @@ wait_for_vm = BashOperator(
 # Task: Prepare Ansible Inventory
 prepare_ansible = BashOperator(
     task_id='prepare_ansible',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Preparing Ansible for FreeIPA Installation"
     echo "========================================"
@@ -332,7 +332,7 @@ EOF
     
     echo ""
     echo "[OK] Ansible preparation complete"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -453,7 +453,7 @@ validate_freeipa = BashOperator(
 
 destroy_freeipa = BashOperator(
     task_id='destroy_freeipa',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Destroying FreeIPA VM"
     echo "========================================"
@@ -479,7 +479,7 @@ destroy_freeipa = BashOperator(
     
     echo ""
     echo "[OK] FreeIPA cleanup complete"
-    ''',
+    """,
     dag=dag,
 )
 

@@ -178,7 +178,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Check prerequisites (Step-CA or Let's Encrypt)
 check_prerequisites = BashOperator(
     task_id='check_prerequisites',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Checking Harbor Prerequisites"
@@ -247,7 +247,7 @@ check_prerequisites = BashOperator(
     
     echo ""
     echo "[OK] Prerequisites check complete"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -255,7 +255,7 @@ check_prerequisites = BashOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating Harbor Environment"
@@ -298,7 +298,7 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -306,7 +306,7 @@ validate_environment = BashOperator(
 # Task: Create Harbor VM
 create_harbor = BashOperator(
     task_id='create_harbor_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Creating Harbor VM"
@@ -383,7 +383,7 @@ create_harbor = BashOperator(
     
     echo ""
     echo "[OK] Harbor deployment initiated"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=45),
     dag=dag,
 )
@@ -392,7 +392,7 @@ create_harbor = BashOperator(
 # Task: Wait for Harbor VM
 wait_for_harbor = BashOperator(
     task_id='wait_for_harbor_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for Harbor VM"
@@ -426,7 +426,7 @@ wait_for_harbor = BashOperator(
     done
     
     echo "[WARN] Timeout waiting for Harbor VM - may still be provisioning"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -435,7 +435,7 @@ wait_for_harbor = BashOperator(
 # Task: Validate Harbor is healthy
 validate_harbor_health = BashOperator(
     task_id='validate_harbor_health',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating Harbor Health"
@@ -481,7 +481,7 @@ validate_harbor_health = BashOperator(
     echo "[WARN] Harbor health check timed out"
     echo "Harbor may still be initializing. Check manually:"
     echo "  curl -k https://$IP/api/v2.0/health"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -490,7 +490,7 @@ validate_harbor_health = BashOperator(
 # Task: Complete deployment
 deployment_complete = BashOperator(
     task_id='deployment_complete',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Harbor Deployment Complete"
@@ -523,7 +523,7 @@ deployment_complete = BashOperator(
     echo "========================================"
     echo "Harbor is ready"
     echo "========================================"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -531,7 +531,7 @@ deployment_complete = BashOperator(
 # Task: Health check (standalone)
 health_check = BashOperator(
     task_id='health_check',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Harbor Health Check"
@@ -565,7 +565,7 @@ health_check = BashOperator(
         echo "Response: $HEALTH"
         exit 1
     fi
-    ''',
+    """,
     dag=dag,
 )
 
@@ -573,7 +573,7 @@ health_check = BashOperator(
 # Task: Delete Harbor
 delete_harbor = BashOperator(
     task_id='delete_harbor',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Deleting Harbor"
@@ -592,7 +592,7 @@ delete_harbor = BashOperator(
         echo "[WARN] VM may not exist"
     
     echo "[OK] Harbor deleted"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -601,7 +601,7 @@ delete_harbor = BashOperator(
 # Task: Check status
 check_status = BashOperator(
     task_id='check_status',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Harbor Status"
@@ -623,7 +623,7 @@ check_status = BashOperator(
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "curl -sk https://$IP/api/v2.0/health 2>/dev/null" || echo "Health check failed"
     fi
-    ''',
+    """,
     dag=dag,
 )
 
@@ -631,7 +631,7 @@ check_status = BashOperator(
 # DNS Registration task - registers the VM hostname in FreeIPA
 register_dns = BashOperator(
     task_id='register_dns',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Registering DNS in FreeIPA"
@@ -695,7 +695,7 @@ EOF
     else
         echo "[INFO] DNS may need time to propagate"
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )

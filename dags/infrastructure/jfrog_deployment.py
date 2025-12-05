@@ -188,7 +188,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Check prerequisites
 check_prerequisites = BashOperator(
     task_id='check_prerequisites',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Checking JFrog Prerequisites"
@@ -237,7 +237,7 @@ check_prerequisites = BashOperator(
     
     echo ""
     echo "[OK] Prerequisites check complete"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -245,7 +245,7 @@ check_prerequisites = BashOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating JFrog Environment"
@@ -288,7 +288,7 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -296,7 +296,7 @@ validate_environment = BashOperator(
 # Task: Create JFrog VM
 create_jfrog = BashOperator(
     task_id='create_jfrog_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Creating JFrog Artifactory VM"
@@ -382,7 +382,7 @@ create_jfrog = BashOperator(
     
     echo ""
     echo "[OK] JFrog deployment initiated"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=45),
     dag=dag,
 )
@@ -391,7 +391,7 @@ create_jfrog = BashOperator(
 # Task: Wait for JFrog VM
 wait_for_jfrog = BashOperator(
     task_id='wait_for_jfrog_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for JFrog VM"
@@ -425,7 +425,7 @@ wait_for_jfrog = BashOperator(
     done
     
     echo "[WARN] Timeout waiting for JFrog VM - may still be provisioning"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -434,7 +434,7 @@ wait_for_jfrog = BashOperator(
 # Task: Validate JFrog is healthy
 validate_jfrog_health = BashOperator(
     task_id='validate_jfrog_health',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating JFrog Health"
@@ -480,7 +480,7 @@ validate_jfrog_health = BashOperator(
     echo "[WARN] Artifactory health check timed out"
     echo "Artifactory may still be initializing. Check manually:"
     echo "  curl http://$IP:8082/artifactory/api/system/ping"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -489,7 +489,7 @@ validate_jfrog_health = BashOperator(
 # Task: Complete deployment
 deployment_complete = BashOperator(
     task_id='deployment_complete',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "JFrog Artifactory Deployment Complete"
@@ -523,7 +523,7 @@ deployment_complete = BashOperator(
     echo "========================================"
     echo "JFrog Artifactory is ready"
     echo "========================================"
-    ''',
+    """,
     dag=dag,
 )
 
@@ -531,7 +531,7 @@ deployment_complete = BashOperator(
 # Task: Health check (standalone)
 health_check = BashOperator(
     task_id='health_check',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "JFrog Artifactory Health Check"
@@ -571,7 +571,7 @@ health_check = BashOperator(
         echo "Response: $PING"
         exit 1
     fi
-    ''',
+    """,
     dag=dag,
 )
 
@@ -579,7 +579,7 @@ health_check = BashOperator(
 # Task: Delete JFrog
 delete_jfrog = BashOperator(
     task_id='delete_jfrog',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Deleting JFrog Artifactory"
@@ -598,7 +598,7 @@ delete_jfrog = BashOperator(
         echo "[WARN] VM may not exist"
     
     echo "[OK] JFrog Artifactory deleted"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -607,7 +607,7 @@ delete_jfrog = BashOperator(
 # Task: Check status
 check_status = BashOperator(
     task_id='check_status',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "JFrog Artifactory Status"
@@ -629,7 +629,7 @@ check_status = BashOperator(
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null" || echo "Health check failed"
     fi
-    ''',
+    """,
     dag=dag,
 )
 
@@ -637,7 +637,7 @@ check_status = BashOperator(
 # DNS Registration task - registers the VM hostname in FreeIPA
 register_dns = BashOperator(
     task_id='register_dns',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Registering DNS in FreeIPA"
@@ -701,7 +701,7 @@ EOF
     else
         echo "[INFO] DNS may need time to propagate"
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )

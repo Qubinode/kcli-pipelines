@@ -69,7 +69,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Create Jumpserver VM
 create_jumpserver = BashOperator(
     task_id='create_jumpserver',
-    bash_command='''
+    bash_command="""
     set -e
     echo "========================================"
     echo "Creating Jumpserver VM (OpenShift Jumpbox)"
@@ -126,7 +126,7 @@ create_jumpserver = BashOperator(
     echo "[OK] VM created successfully"
     echo "Default Network IP: $IP"
     echo "Isolated Network IP: $STATIC_IP"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -134,7 +134,7 @@ create_jumpserver = BashOperator(
 # Task: Configure Network (second NIC for isolated network)
 configure_network = BashOperator(
     task_id='configure_network',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Configuring Network"
     echo "========================================"
@@ -159,7 +159,7 @@ configure_network = BashOperator(
         "ssh -o StrictHostKeyChecking=no fedora@${IP} 'SECOND_NIC=\$(ip -o link show | awk -F\": \" \"{print \\\$2}\" | grep -v lo | tail -1); if [ -n \"\$SECOND_NIC\" ]; then if ! ip addr show \$SECOND_NIC | grep -q ${STATIC_IP}; then sudo nmcli con add type ethernet con-name isolated ifname \$SECOND_NIC ip4 ${STATIC_IP}/24 gw4 ${GATEWAY} && sudo nmcli con up isolated && echo OK; else echo Already configured; fi; else echo No second NIC; fi'"
     
     echo "[OK] Network configuration complete"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )
@@ -167,7 +167,7 @@ configure_network = BashOperator(
 # Task: Install GUI
 install_gui = BashOperator(
     task_id='install_gui',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "GUI Installation"
     echo "========================================"
@@ -220,7 +220,7 @@ install_gui = BashOperator(
     echo "To start VNC server:"
     echo "  ssh fedora@${IP} 'vncserver :1 -geometry 1920x1080'"
     echo "  Connect to: ${IP}:5901"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=30),
     dag=dag,
 )
@@ -228,7 +228,7 @@ install_gui = BashOperator(
 # Task: Show connection info
 show_connection_info = BashOperator(
     task_id='show_connection_info',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Jumpserver Deployment Complete"
     echo "========================================"
@@ -262,7 +262,7 @@ show_connection_info = BashOperator(
     echo "========================================"
     echo "Pre-installed tools: oc, kubectl, helm, podman"
     echo "========================================"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=2),
     dag=dag,
 )
@@ -270,7 +270,7 @@ show_connection_info = BashOperator(
 # Task: Delete Jumpserver
 delete_jumpserver = BashOperator(
     task_id='delete_jumpserver',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Deleting Jumpserver VM"
     echo "========================================"
@@ -281,7 +281,7 @@ delete_jumpserver = BashOperator(
         "kcli delete vm ${VM_NAME} -y" || echo "VM may not exist"
     
     echo "[OK] Jumpserver deleted"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )
@@ -289,7 +289,7 @@ delete_jumpserver = BashOperator(
 # Task: Check Status
 check_status = BashOperator(
     task_id='check_status',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Jumpserver Status"
     echo "========================================"
@@ -298,7 +298,7 @@ check_status = BashOperator(
     
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "kcli info vm ${VM_NAME}" || echo "VM not found"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=2),
     dag=dag,
 )

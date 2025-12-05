@@ -72,7 +72,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Validating VyOS Deployment Environment"
     echo "========================================"
@@ -101,14 +101,14 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Create libvirt networks
 create_networks = BashOperator(
     task_id='create_libvirt_networks',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Creating Isolated Libvirt Networks"
     echo "========================================"
@@ -161,7 +161,7 @@ EOF
     echo ""
     echo "Current networks:"
     virsh -c qemu:///system net-list --all
-    ''',
+    """,
     dag=dag,
 )
 
@@ -169,7 +169,7 @@ EOF
 # ADR-0046: Download on host via SSH
 download_vyos = BashOperator(
     task_id='download_vyos_iso',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Downloading VyOS ISO"
@@ -222,7 +222,7 @@ download_vyos = BashOperator(
             exit 1
         fi
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -231,7 +231,7 @@ download_vyos = BashOperator(
 # ADR-0047: Call qubinode-pipelines deploy.sh via SSH to host
 create_vyos_vm = BashOperator(
     task_id='create_vyos_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     set -e
     echo "========================================"
@@ -269,7 +269,7 @@ create_vyos_vm = BashOperator(
     echo ""
     echo "The DAG will now wait for you to complete the manual installation steps."
     echo "Check the output above for instructions."
-    ''',
+    """,
     execution_timeout=timedelta(minutes=15),
     dag=dag,
 )
@@ -279,7 +279,7 @@ create_vyos_vm = BashOperator(
 # Polls until the router's external interface is pingable
 wait_for_install = BashOperator(
     task_id='wait_for_vyos_install',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for VyOS Router Configuration"
@@ -347,7 +347,7 @@ wait_for_install = BashOperator(
             fi
         fi
     done
-    ''',
+    """,
     execution_timeout=timedelta(minutes=35),
     dag=dag,
 )
@@ -357,7 +357,7 @@ wait_for_install = BashOperator(
 # This confirms the VyOS config script has been applied
 wait_for_boot = BashOperator(
     task_id='wait_for_vyos_boot',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for VyOS Internal Network"
@@ -414,7 +414,7 @@ wait_for_boot = BashOperator(
             fi
         fi
     done
-    ''',
+    """,
     execution_timeout=timedelta(minutes=35),
     dag=dag,
 )
@@ -422,7 +422,7 @@ wait_for_boot = BashOperator(
 # Task: Configure VyOS (optional)
 configure_vyos = BashOperator(
     task_id='configure_vyos',
-    bash_command=f'''
+    bash_command=f"""
     echo "========================================"
     echo "VyOS Configuration Instructions"
     echo "========================================"
@@ -478,14 +478,14 @@ configure_vyos = BashOperator(
     echo "Default VyOS credentials:"
     echo "  Username: vyos"
     echo "  Password: vyos"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Add host routes
 add_host_routes = BashOperator(
     task_id='add_host_routes',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Adding Host Routes"
     echo "========================================"
@@ -544,14 +544,14 @@ add_host_routes = BashOperator(
     echo ""
     echo "Current routes to VyOS networks:"
     ip route show | grep "$GATEWAY" || echo "No routes found"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Validate deployment
 validate_deployment = BashOperator(
     task_id='validate_deployment',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Validating VyOS Deployment"
     echo "========================================"
@@ -599,14 +599,14 @@ validate_deployment = BashOperator(
     echo "  Username: vyos"
     echo "  Password: vyos"
     echo ""
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Destroy VyOS
 destroy_vyos = BashOperator(
     task_id='destroy_vyos',
-    bash_command='''
+    bash_command="""
     echo "========================================"
     echo "Destroying VyOS Router"
     echo "========================================"
@@ -640,7 +640,7 @@ destroy_vyos = BashOperator(
     echo "Note: Isolated networks (1924-1928) were preserved."
     echo "To remove them, run:"
     echo "  for NET in 1924 1925 1926 1927 1928; do virsh net-destroy \\$NET; virsh net-undefine \\$NET; done"
-    ''',
+    """,
     dag=dag,
 )
 
