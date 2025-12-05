@@ -1,0 +1,320 @@
+name: DAG Validation
+
+on:
+  pull_request:
+    paths:
+      - 'dags/**/*.py'
+      - 'dags/registry.yaml'
+      - '.github/workflows/dag-validation.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'dags/**/*.py'
+      - 'dags/registry.yaml'
+
+jobs:
+  validate-dags:
+    name: Validate DAG Syntax and Standards
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout qubinode-pipelines
+        uses: actions/checkout@v4
+        with:
+          path: qubinode-pipelines
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Apache Airflow and dependencies
+        run: |
+          pip install --upgrade pip
+          pip install apache-airflow==2.7.3
+          pip install apache-airflow-providers-ssh
+          pip install pyyaml
+
+      - name: Validate DAG Python Syntax
+        run: |
+          echo "========================================"
+          echo "Validating DAG Python Syntax"
+          echo "========================================"
+          
+          # Find all Python files in dags directory
+          DAG_FILES=$(find qubinode-pipelines/dags -name "*.py" -type f | grep -v "__pycache__" | grep -v "TEMPLATE.py")
+          
+          if [ -z "$DAG_FILES" ]; then
+            echo "[INFO] No DAG files found to validate"
+            exit 0
+          fi
+          
+          ERRORS=0
+          for DAG_FILE in $DAG_FILES; do
+            echo ""
+            echo "Checking: $DAG_FILE"
+            
+            # Check Python syntax
+            if python -m py_compile "$DAG_FILE" 2>&1; then
+              echo "  [OK] Syntax valid"
+            else
+              echo "  [ERROR] Syntax error"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          
+          if [ $ERRORS -gt 0 ]; then
+            echo ""
+            echo "[ERROR] $ERRORS DAG(s) have syntax errors"
+            exit 1
+          fi
+          
+          echo ""
+          echo "[OK] All DAGs have valid Python syntax"
+
+      - name: Validate DAG Standards (ADR-0045)
+        run: |
+          echo "========================================"
+          echo "Validating DAG Standards"
+          echo "========================================"
+          
+          DAG_FILES=$(find qubinode-pipelines/dags -name "*.py" -type f | grep -v "__pycache__" | grep -v "TEMPLATE.py")
+          
+          if [ -z "$DAG_FILES" ]; then
+            echo "[INFO] No DAG files found to validate"
+            exit 0
+          fi
+          
+          WARNINGS=0
+          ERRORS=0
+          
+          for DAG_FILE in $DAG_FILES; do
+            echo ""
+            echo "Checking: $DAG_FILE"
+            
+            # Check for triple single quotes (should use triple double quotes)
+            if grep -q "bash_command='''" "$DAG_FILE"; then
+              echo "  [ERROR] Uses ''' instead of \"\"\" for bash_command"
+              ERRORS=$((ERRORS + 1))
+            else
+              echo "  [OK] Uses \"\"\" for bash_command"
+            fi
+            
+            # Check for snake_case filename
+            BASENAME=$(basename "$DAG_FILE")
+            if [[ ! "$BASENAME" =~ ^[a-z_]+\.py$ ]]; then
+              echo "  [WARN] Filename not in snake_case: $BASENAME"
+              WARNINGS=$((WARNINGS + 1))
+            else
+              echo "  [OK] Filename in snake_case"
+            fi
+            
+            # Check for docstring
+            if head -20 "$DAG_FILE" | grep -q '"""'; then
+              echo "  [OK] Has docstring"
+            else
+              echo "  [WARN] Missing docstring"
+              WARNINGS=$((WARNINGS + 1))
+            fi
+            
+            # Check for ASCII output markers
+            if grep -q '\[OK\]' "$DAG_FILE" && grep -q '\[ERROR\]' "$DAG_FILE"; then
+              echo "  [OK] Uses ASCII output markers"
+            else
+              echo "  [WARN] Missing standard output markers ([OK], [ERROR], [WARN], [INFO])"
+              WARNINGS=$((WARNINGS + 1))
+            fi
+          done
+          
+          echo ""
+          echo "========================================"
+          echo "Validation Summary"
+          echo "========================================"
+          echo "Errors: $ERRORS"
+          echo "Warnings: $WARNINGS"
+          
+          if [ $ERRORS -gt 0 ]; then
+            echo ""
+            echo "[ERROR] $ERRORS DAG(s) have standards violations"
+            exit 1
+          fi
+          
+          if [ $WARNINGS -gt 0 ]; then
+            echo ""
+            echo "[WARN] $WARNINGS DAG(s) have standards warnings (non-blocking)"
+          fi
+          
+          echo ""
+          echo "[OK] All DAGs pass standards validation"
+
+      - name: Validate DAG Airflow Import
+        run: |
+          echo "========================================"
+          echo "Validating DAG Airflow Import"
+          echo "========================================"
+          
+          # Set AIRFLOW_HOME
+          export AIRFLOW_HOME=$PWD/airflow_home
+          mkdir -p $AIRFLOW_HOME/dags
+          
+          # Initialize Airflow DB
+          airflow db migrate
+          
+          # Copy DAGs to Airflow
+          cp -r qubinode-pipelines/dags/* $AIRFLOW_HOME/dags/
+          
+          # List DAGs
+          echo ""
+          echo "Listing DAGs..."
+          airflow dags list 2>&1 | tee dag_list.txt
+          
+          # Check for import errors
+          if airflow dags list-import-errors 2>&1 | grep -v "^$" | grep -v "No data found"; then
+            echo ""
+            echo "[ERROR] DAG import errors found"
+            airflow dags list-import-errors
+            exit 1
+          fi
+          
+          echo ""
+          echo "[OK] All DAGs import successfully"
+
+      - name: Validate Registry YAML
+        run: |
+          echo "========================================"
+          echo "Validating dags/registry.yaml"
+          echo "========================================"
+          
+          REGISTRY_FILE="qubinode-pipelines/dags/registry.yaml"
+          
+          if [ ! -f "$REGISTRY_FILE" ]; then
+            echo "[ERROR] registry.yaml not found"
+            exit 1
+          fi
+          
+          # Validate YAML syntax
+          python -c "import yaml; yaml.safe_load(open('$REGISTRY_FILE'))" 2>&1
+          if [ $? -ne 0 ]; then
+            echo "[ERROR] Invalid YAML syntax"
+            exit 1
+          fi
+          echo "[OK] YAML syntax valid"
+          
+          # Check required fields
+          if ! grep -q "^version:" "$REGISTRY_FILE"; then
+            echo "[ERROR] Missing 'version' field"
+            exit 1
+          fi
+          echo "[OK] Has version field"
+          
+          if ! grep -q "^categories:" "$REGISTRY_FILE"; then
+            echo "[ERROR] Missing 'categories' field"
+            exit 1
+          fi
+          echo "[OK] Has categories field"
+          
+          echo ""
+          echo "[OK] registry.yaml is valid"
+
+      - name: Check for Updated Registry
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "========================================"
+          echo "Checking if registry.yaml is updated"
+          echo "========================================"
+          
+          # Check if any DAG files were added or modified
+          DAG_CHANGES=$(git -C qubinode-pipelines diff --name-only origin/${{ github.base_ref }}...HEAD | grep "^dags/.*\.py$" | grep -v TEMPLATE.py || true)
+          
+          if [ -z "$DAG_CHANGES" ]; then
+            echo "[INFO] No DAG files changed, skipping registry check"
+            exit 0
+          fi
+          
+          echo "DAG files changed:"
+          echo "$DAG_CHANGES"
+          echo ""
+          
+          # Check if registry.yaml was also updated
+          REGISTRY_CHANGED=$(git -C qubinode-pipelines diff --name-only origin/${{ github.base_ref }}...HEAD | grep "^dags/registry.yaml$" || true)
+          
+          if [ -z "$REGISTRY_CHANGED" ]; then
+            echo "[WARN] DAG files changed but registry.yaml not updated"
+            echo "Please update dags/registry.yaml to include new/modified DAGs"
+            exit 0  # Warning only, not blocking
+          fi
+          
+          echo "[OK] registry.yaml was updated along with DAG changes"
+
+  lint-dags:
+    name: Lint DAG Code Style
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linting tools
+        run: |
+          pip install --upgrade pip
+          pip install flake8 black
+
+      - name: Run flake8
+        run: |
+          echo "========================================"
+          echo "Running flake8 Linter"
+          echo "========================================"
+          
+          # Lint Python files, ignoring some common Airflow patterns
+          flake8 dags/ \
+            --exclude=__pycache__,.git \
+            --max-line-length=120 \
+            --extend-ignore=E203,W503 \
+            --show-source \
+            --statistics \
+            || echo "[WARN] Linting warnings found (non-blocking)"
+
+      - name: Check code formatting with black
+        run: |
+          echo "========================================"
+          echo "Checking Code Formatting"
+          echo "========================================"
+          
+          # Check formatting without modifying files
+          black --check --line-length 120 dags/ \
+            || echo "[WARN] Code formatting issues found (non-blocking)"
+
+  summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [validate-dags, lint-dags]
+    if: always()
+    
+    steps:
+      - name: Check validation results
+        run: |
+          echo "========================================"
+          echo "DAG Validation Summary"
+          echo "========================================"
+          echo ""
+          echo "Validation: ${{ needs.validate-dags.result }}"
+          echo "Linting: ${{ needs.lint-dags.result }}"
+          echo ""
+          
+          if [ "${{ needs.validate-dags.result }}" != "success" ]; then
+            echo "[ERROR] DAG validation failed"
+            exit 1
+          fi
+          
+          if [ "${{ needs.lint-dags.result }}" != "success" ]; then
+            echo "[WARN] Linting had warnings (non-blocking)"
+          fi
+          
+          echo "[OK] All validations passed"
