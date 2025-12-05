@@ -103,7 +103,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating VM Deployment Environment"
@@ -144,14 +144,14 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Configure kcli profile
 configure_profile = BashOperator(
     task_id='configure_kcli_profile',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Configuring kcli Profile"
@@ -183,7 +183,7 @@ configure_profile = BashOperator(
         fi"
     
     echo "[OK] Profile configuration complete"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )
@@ -191,7 +191,7 @@ configure_profile = BashOperator(
 # Task: Create VM
 create_vm = BashOperator(
     task_id='create_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Creating VM via kcli-pipelines"
@@ -233,7 +233,7 @@ create_vm = BashOperator(
     
     echo ""
     echo "[OK] VM deployment initiated"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=30),
     dag=dag,
 )
@@ -241,7 +241,7 @@ create_vm = BashOperator(
 # Task: Wait for VM to be ready
 wait_for_vm = BashOperator(
     task_id='wait_for_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for VM to be Ready"
@@ -294,7 +294,7 @@ wait_for_vm = BashOperator(
     done
     
     echo "[WARN] Timeout waiting for VM - may still be provisioning"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=15),
     dag=dag,
 )
@@ -302,7 +302,7 @@ wait_for_vm = BashOperator(
 # Task: Validate deployment
 validate_deployment = BashOperator(
     task_id='validate_deployment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating VM Deployment"
@@ -340,14 +340,14 @@ validate_deployment = BashOperator(
     echo "Access:"
     echo "  SSH: ssh cloud-user@$IP"
     echo "  Console: kcli console $VM_NAME"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Delete VM
 delete_vm = BashOperator(
     task_id='delete_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Deleting VM"
@@ -375,7 +375,7 @@ delete_vm = BashOperator(
          ./deploy-vm.sh"
     
     echo "[OK] VM deleted"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -383,7 +383,7 @@ delete_vm = BashOperator(
 # Task: Check status
 check_status = BashOperator(
     task_id='check_status',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "VM Status"
@@ -400,7 +400,7 @@ check_status = BashOperator(
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "kcli list vm | grep -E '$VM_PROFILE|Name'" 2>/dev/null
     fi
-    ''',
+    """,
     dag=dag,
 )
 
