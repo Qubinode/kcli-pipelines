@@ -1,25 +1,28 @@
 """
-Airflow DAG: Mirror-Registry Deployment (Quay-based)
+Airflow DAG: Harbor Registry Deployment
 kcli-pipelines integration per ADR-0047
 
-This DAG deploys a Quay-based mirror-registry for:
-- Disconnected OpenShift installs
-- Container image mirroring
-- Air-gapped environments
+This DAG deploys Harbor container registry for:
+- Enterprise container image management
+- Image scanning and signing
+- Multi-tenant registry
+- Helm chart repository
 
-Integrates with: Step-CA for TLS certificates
-Calls: /opt/kcli-pipelines/mirror-registry/deploy.sh
+Certificate modes:
+- step-ca: Use internal Step-CA for certificates (default)
+- letsencrypt: Use Let's Encrypt via AWS Route53
+
+Calls: /opt/qubinode-pipelines/harbor/deploy.sh
 """
 
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
-MIRROR_REGISTRY_DIR = f'{KCLI_PIPELINES_DIR}/mirror-registry'
+KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
+HARBOR_DIR = f'{KCLI_PIPELINES_DIR}/harbor'
 
 default_args = {
     'owner': 'qubinode',
@@ -32,130 +35,122 @@ default_args = {
 }
 
 dag = DAG(
-    'mirror_registry_deployment',
+    'harbor_deployment',
     default_args=default_args,
-    description='Deploy Quay-based mirror-registry for disconnected OpenShift installs',
+    description='Deploy Harbor enterprise container registry',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'mirror-registry', 'quay', 'disconnected', 'ocp4-disconnected-helper'],
+    tags=['qubinode', 'kcli-pipelines', 'harbor', 'registry', 'enterprise'],
     params={
         'action': 'create',  # create, delete, status, health
-        'vm_name': 'mirror-registry',  # VM name
-        'quay_version': 'v2.0.3',  # Quay mirror-registry version (latest stable)
+        'vm_name': 'harbor',  # VM name
+        'harbor_version': 'v2.10.1',  # Harbor version
+        'cert_mode': 'step-ca',  # step-ca or letsencrypt
         'domain': 'example.com',  # Domain for certificates
         'target_server': 'localhost',  # Target server
-        'network': 'default',  # Primary network (DHCP for management)
-        'isolated_network': '1924',  # Isolated network for disconnected OCP
-        'isolated_ip': '192.168.49.10',  # Static IP on isolated network
-        'isolated_gateway': '192.168.49.1',  # Gateway for isolated network
-        'step_ca_vm': 'step-ca-server',  # Step-CA server VM name
+        'network': 'qubinet',  # Network to deploy on
+        'step_ca_vm': 'step-ca-server',  # Step-CA server VM name (for step-ca mode)
+        'email': '',  # Email for Let's Encrypt (for letsencrypt mode)
     },
     doc_md="""
-    # Mirror-Registry Deployment DAG
+    # Harbor Registry Deployment DAG
     
-    Deploy a Quay-based mirror-registry for disconnected OpenShift environments.
+    Deploy Harbor enterprise container registry.
     
     ## Features
     
-    - Lightweight Quay registry for image mirroring
-    - Supports disconnected/air-gapped installs
-    - Integrates with **Step-CA** for TLS certificates
-    - RHEL8-based VM with Podman
-    - **Dual-NIC architecture** for management + isolated network access
+    - Enterprise-grade container registry
+    - Image scanning and vulnerability analysis
+    - Image signing and trust
+    - Multi-tenant support with RBAC
+    - Helm chart repository
+    - Docker Hub proxy cache
+    - Ubuntu-based VM with Docker
     
-    ## Architecture
+    ## Certificate Modes
     
-    ```
-    +------------------+     +------------------+     +------------------+
-    |   Step-CA        | --> | Mirror Registry  | --> | OpenShift        |
-    |   (Certificates) |     | (eth0: mgmt)     |     | (Disconnected)   |
-    +------------------+     | (eth1: isolated) |     +------------------+
-                             +------------------+
-                                    |
-                             +------------------+
-                             |   VyOS Router    |
-                             |  (192.168.49.x)  |
-                             +------------------+
-    ```
+    ### Step-CA (Default)
+    Uses internal Step-CA server for TLS certificates:
+    - Ideal for disconnected/air-gapped environments
+    - Requires Step-CA server deployed first
     
-    ## Dual-NIC Network Design
-    
-    | Interface | Network  | Purpose                    | IP Type  |
-    |-----------|----------|----------------------------|----------|
-    | eth0      | default  | Management/SSH access      | DHCP     |
-    | eth1      | 1924     | Disconnected OCP access    | Static   |
+    ### Let's Encrypt
+    Uses Let's Encrypt via AWS Route53 DNS validation:
+    - Requires AWS credentials
+    - Requires public DNS (Route53)
+    - Ideal for internet-connected environments
     
     ## Prerequisites
     
-    1. **Step-CA Server** must be deployed first for TLS certificates:
-       ```bash
-       airflow dags trigger step_ca_deployment --conf '{"action": "create"}'
-       ```
+    ### For Step-CA mode:
+    ```bash
+    airflow dags trigger step_ca_deployment --conf '{"action": "create"}'
+    ```
     
-    2. **FreeIPA** should be running for DNS registration
-    3. **VyOS Router** should be configured with DHCP on isolated network
+    ### For Let's Encrypt mode:
+    - AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in vault
+    - Route53 DNS zone for your domain
     
     ## Parameters
     
     - **action**: create, delete, status, or health
-    - **vm_name**: Name for the registry VM (default: mirror-registry)
-    - **quay_version**: Quay mirror-registry version
+    - **vm_name**: Name for the registry VM (default: harbor)
+    - **harbor_version**: Harbor version
+    - **cert_mode**: step-ca or letsencrypt
     - **domain**: Domain for certificate generation
-    - **network**: Primary network with DHCP (default: default)
-    - **isolated_network**: Isolated network for OCP (default: 1924)
-    - **isolated_ip**: Static IP on isolated network (default: 192.168.49.10)
-    - **isolated_gateway**: Gateway for isolated network (default: 192.168.49.1)
-    - **step_ca_vm**: Name of the Step-CA server VM
+    - **step_ca_vm**: Name of the Step-CA server VM (step-ca mode)
+    - **email**: Email for Let's Encrypt (letsencrypt mode)
     
     ## Usage
     
-    ### Create Mirror-Registry with Dual-NIC
+    ### Create Harbor with Step-CA
     ```bash
-    airflow dags trigger mirror_registry_deployment --conf '{
+    airflow dags trigger harbor_deployment --conf '{
         "action": "create",
-        "vm_name": "mirror-registry",
-        "quay_version": "v1.3.11",
-        "network": "default",
-        "isolated_network": "1924",
-        "isolated_ip": "192.168.49.10"
+        "vm_name": "harbor",
+        "harbor_version": "v2.10.1",
+        "cert_mode": "step-ca"
     }'
     ```
     
-    ### Check Registry Health
+    ### Create Harbor with Let's Encrypt
     ```bash
-    airflow dags trigger mirror_registry_deployment --conf '{
+    airflow dags trigger harbor_deployment --conf '{
+        "action": "create",
+        "vm_name": "harbor",
+        "harbor_version": "v2.10.1",
+        "cert_mode": "letsencrypt",
+        "email": "admin@example.com"
+    }'
+    ```
+    
+    ### Check Harbor Health
+    ```bash
+    airflow dags trigger harbor_deployment --conf '{
         "action": "health",
-        "vm_name": "mirror-registry"
-    }'
-    ```
-    
-    ### Delete Registry
-    ```bash
-    airflow dags trigger mirror_registry_deployment --conf '{
-        "action": "delete",
-        "vm_name": "mirror-registry"
+        "vm_name": "harbor"
     }'
     ```
     
     ## Post-Deployment
     
-    After deployment, the registry will be available at:
-    - **URL**: https://mirror-registry.<domain>:8443
-    - **Health**: https://<ip>:8443/health/instance
+    After deployment, Harbor will be available at:
+    - **URL**: https://harbor.<domain>
+    - **Default User**: admin
+    - **Default Password**: Harbor12345
     
-    To mirror OpenShift images:
+    ### Push an image:
     ```bash
-    oc adm release mirror --from=quay.io/openshift-release-dev/ocp-release:4.14.0-x86_64 \\
-        --to=mirror-registry.<domain>:8443/ocp4/openshift4 \\
-        --to-release-image=mirror-registry.<domain>:8443/ocp4/openshift4:4.14.0-x86_64
+    docker login harbor.<domain>
+    docker tag myimage:latest harbor.<domain>/library/myimage:latest
+    docker push harbor.<domain>/library/myimage:latest
     ```
     
     ## Related DAGs
     
-    - `harbor_deployment` - Harbor registry (Let's Encrypt or Step-CA)
-    - `jfrog_deployment` - JFrog Artifactory registry
-    - `ocp_initial_deployment` - OpenShift deployment (uses this registry)
-    - `ocp_incremental_update` - OpenShift updates (uses this registry)
+    - `mirror_registry_deployment` - Quay mirror-registry (lighter weight)
+    - `jfrog_deployment` - JFrog Artifactory
+    - `step_ca_deployment` - Certificate authority (prerequisite for step-ca mode)
     """,
 )
 
@@ -164,12 +159,12 @@ def decide_action(**context):
     """Branch based on action parameter"""
     action = context['params'].get('action', 'create')
     if action == 'delete':
-        return 'delete_registry'
+        return 'delete_harbor'
     elif action == 'status':
         return 'check_status'
     elif action == 'health':
         return 'health_check'
-    return 'check_step_ca_available'
+    return 'check_prerequisites'
 
 
 # Task: Decide action
@@ -180,56 +175,78 @@ decide_action_task = BranchPythonOperator(
 )
 
 
-# Task: Check Step-CA is available (prerequisite)
-check_step_ca = BashOperator(
-    task_id='check_step_ca_available',
+# Task: Check prerequisites (Step-CA or Let's Encrypt)
+check_prerequisites = BashOperator(
+    task_id='check_prerequisites',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Checking Step-CA Prerequisite"
+    echo "Checking Harbor Prerequisites"
     echo "========================================"
     
+    CERT_MODE="{{ params.cert_mode }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
+    EMAIL="{{ params.email }}"
     
-    # Check if Step-CA VM exists
-    STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
+    echo "Certificate Mode: $CERT_MODE"
     
-    if [ -z "$STEP_CA_IP" ] || [ "$STEP_CA_IP" == "None" ]; then
-        echo "[ERROR] Step-CA server not found: $STEP_CA_VM"
+    if [ "$CERT_MODE" == "step-ca" ]; then
         echo ""
-        echo "Step-CA is required for registry TLS certificates."
-        echo "Deploy Step-CA first:"
-        echo "  airflow dags trigger step_ca_deployment --conf '{\"action\": \"create\"}'"
-        exit 1
+        echo "Checking Step-CA server..."
+        
+        STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
+        
+        if [ -z "$STEP_CA_IP" ] || [ "$STEP_CA_IP" == "None" ]; then
+            echo "[ERROR] Step-CA server not found: $STEP_CA_VM"
+            echo ""
+            echo "Step-CA is required for Harbor TLS certificates in step-ca mode."
+            echo "Deploy Step-CA first:"
+            echo "  airflow dags trigger step_ca_deployment --conf '{\"action\": \"create\"}'"
+            echo ""
+            echo "Or use Let's Encrypt mode:"
+            echo "  airflow dags trigger harbor_deployment --conf '{\"cert_mode\": \"letsencrypt\", \"email\": \"you@example.com\"}'"
+            exit 1
+        fi
+        
+        echo "[OK] Step-CA server found at: $STEP_CA_IP"
+        
+        # Check Step-CA health
+        if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "curl -sk https://$STEP_CA_IP:443/health 2>/dev/null | grep -q ok"; then
+            echo "[OK] Step-CA is healthy"
+        else
+            echo "[WARN] Step-CA may not be responding"
+        fi
+        
+    elif [ "$CERT_MODE" == "letsencrypt" ]; then
+        echo ""
+        echo "Checking Let's Encrypt prerequisites..."
+        
+        if [ -z "$EMAIL" ]; then
+            echo "[ERROR] Email is required for Let's Encrypt mode"
+            echo "Set the 'email' parameter when triggering the DAG"
+            exit 1
+        fi
+        echo "[OK] Email provided: $EMAIL"
+        
+        # Note: AWS credentials will be checked during deployment from vault
+        echo "[INFO] AWS credentials will be loaded from vault during deployment"
     fi
     
-    echo "[OK] Step-CA server found at: $STEP_CA_IP"
-    
-    # Check Step-CA health
-    echo "Checking Step-CA health..."
+    # Check Ubuntu image
+    echo ""
+    echo "Checking Ubuntu image..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "curl -sk https://$STEP_CA_IP:443/health 2>/dev/null | grep -q ok"; then
-        echo "[OK] Step-CA is healthy"
+        "kcli list image | grep -q ubuntu2204"; then
+        echo "[OK] Ubuntu 22.04 image available"
     else
-        echo "[WARN] Step-CA may not be responding - continuing anyway"
-    fi
-    
-    # Get CA fingerprint for later use
-    echo ""
-    echo "Getting CA fingerprint..."
-    FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
-            'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'" || true)
-    
-    if [ -n "$FINGERPRINT" ]; then
-        echo "[OK] CA Fingerprint: $FINGERPRINT"
-    else
-        echo "[WARN] Could not get CA fingerprint - will try during deployment"
+        echo "[WARN] Ubuntu 22.04 image may not be available"
+        echo "Download with: kcli download image ubuntu2204"
     fi
     
     echo ""
-    echo "[OK] Step-CA prerequisite check complete"
+    echo "[OK] Prerequisites check complete"
     ''',
     dag=dag,
 )
@@ -241,12 +258,12 @@ validate_environment = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Validating Mirror-Registry Environment"
+    echo "Validating Harbor Environment"
     echo "========================================"
     
     DOMAIN="{{ params.domain }}"
     
-    echo "Registry Type: mirror-registry (Quay)"
+    echo "Registry Type: Harbor"
     echo "Domain: $DOMAIN"
     
     # Check kcli
@@ -258,24 +275,14 @@ validate_environment = BashOperator(
     fi
     echo "[OK] kcli available"
     
-    # Check for mirror-registry scripts
-    echo "Checking mirror-registry deployment scripts..."
+    # Check for Harbor scripts
+    echo "Checking Harbor deployment scripts..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "test -f /opt/kcli-pipelines/mirror-registry/deploy.sh"; then
-        echo "[OK] Mirror-registry deploy script found"
+        "test -f /opt/qubinode-pipelines/harbor/deploy.sh"; then
+        echo "[OK] Harbor deploy script found"
     else
-        echo "[ERROR] Mirror-registry deploy.sh not found"
+        echo "[ERROR] Harbor deploy.sh not found"
         exit 1
-    fi
-    
-    # Check RHEL8 image
-    echo "Checking RHEL8 image..."
-    if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "ls /var/lib/libvirt/images/rhel8 2>/dev/null" | grep -q rhel; then
-        echo "[OK] RHEL8 image found"
-    else
-        echo "[WARN] RHEL8 image may not be available"
-        echo "Download with: kcli download image rhel8"
     fi
     
     # Check FreeIPA for DNS
@@ -296,30 +303,30 @@ validate_environment = BashOperator(
 )
 
 
-# Task: Create Mirror-Registry VM
-create_registry = BashOperator(
-    task_id='create_registry_vm',
+# Task: Create Harbor VM
+create_harbor = BashOperator(
+    task_id='create_harbor_vm',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Creating Mirror-Registry VM (Dual-NIC)"
+    echo "Creating Harbor VM"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
-    QUAY_VERSION="{{ params.quay_version }}"
+    HARBOR_VERSION="{{ params.harbor_version }}"
+    CERT_MODE="{{ params.cert_mode }}"
     DOMAIN="{{ params.domain }}"
     NETWORK="{{ params.network }}"
     ISOLATED_NETWORK="{{ params.isolated_network }}"
     ISOLATED_IP="{{ params.isolated_ip }}"
     ISOLATED_GATEWAY="{{ params.isolated_gateway }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
+    EMAIL="{{ params.email }}"
     
     echo "VM Name: $VM_NAME"
-    echo "Quay Version: $QUAY_VERSION"
-    echo "Primary Network: $NETWORK (DHCP)"
-    echo "Isolated Network: $ISOLATED_NETWORK"
-    echo "Isolated IP: $ISOLATED_IP"
-    echo "Isolated Gateway: $ISOLATED_GATEWAY"
+    echo "Harbor Version: $HARBOR_VERSION"
+    echo "Certificate Mode: $CERT_MODE"
+    echo "Dual-NIC: $NETWORK (mgmt) + $ISOLATED_NETWORK ($ISOLATED_IP)"
     
     # Check if VM already exists
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
@@ -330,52 +337,65 @@ create_registry = BashOperator(
         exit 0
     fi
     
-    # Get Step-CA info
-    STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
-    
-    CA_URL="https://${STEP_CA_IP}:443"
-    
-    # Get CA fingerprint
-    FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
-            'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'")
-    
-    echo "Step-CA URL: $CA_URL"
-    echo "CA Fingerprint: $FINGERPRINT"
-    
-    # Create mirror-registry with dual-NIC
-    echo "Creating Mirror-Registry with Dual-NIC..."
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "export VM_NAME=$VM_NAME && \
-         export QUAY_VERSION=$QUAY_VERSION && \
-         export DOMAIN=$DOMAIN && \
-         export CA_URL=$CA_URL && \
-         export FINGERPRINT=$FINGERPRINT && \
-         export PASSWORD=password && \
-         export STEP_CA_PASSWORD=password && \
-         export NET_NAME=$NETWORK && \
-         export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
-         export ISOLATED_IP=$ISOLATED_IP && \
-         export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
-         cd /opt/kcli-pipelines && \
-         ./mirror-registry/deploy.sh create"
+    # Prepare environment variables based on cert mode
+    if [ "$CERT_MODE" == "step-ca" ]; then
+        STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
+        
+        CA_URL="https://${STEP_CA_IP}:443"
+        
+        FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
+                'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'")
+        
+        echo "Step-CA URL: $CA_URL"
+        echo "CA Fingerprint: $FINGERPRINT"
+        
+        # Create Harbor with Step-CA and dual-NIC
+        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "export VM_NAME=$VM_NAME && \
+             export HARBOR_VERSION=$HARBOR_VERSION && \
+             export CERT_MODE=step-ca && \
+             export CA_URL=$CA_URL && \
+             export FINGERPRINT=$FINGERPRINT && \
+             export NET_NAME=$NETWORK && \
+             export DOMAIN=$DOMAIN && \
+             export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
+             export ISOLATED_IP=$ISOLATED_IP && \
+             export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
+             cd /opt/qubinode-pipelines && \
+             ./harbor/deploy.sh create"
+    else
+        # Create Harbor with Let's Encrypt and dual-NIC
+        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "export VM_NAME=$VM_NAME && \
+             export HARBOR_VERSION=$HARBOR_VERSION && \
+             export CERT_MODE=letsencrypt && \
+             export EMAIL=$EMAIL && \
+             export NET_NAME=$NETWORK && \
+             export DOMAIN=$DOMAIN && \
+             export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
+             export ISOLATED_IP=$ISOLATED_IP && \
+             export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
+             cd /opt/qubinode-pipelines && \
+             ./harbor/deploy.sh create"
+    fi
     
     echo ""
-    echo "[OK] Mirror-Registry deployment initiated with dual-NIC"
+    echo "[OK] Harbor deployment initiated"
     ''',
     execution_timeout=timedelta(minutes=45),
     dag=dag,
 )
 
 
-# Task: Wait for Registry VM
-wait_for_registry = BashOperator(
-    task_id='wait_for_registry_vm',
+# Task: Wait for Harbor VM
+wait_for_harbor = BashOperator(
+    task_id='wait_for_harbor_vm',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Waiting for Mirror-Registry VM"
+    echo "Waiting for Harbor VM"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -397,7 +417,7 @@ wait_for_registry = BashOperator(
             if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
                 "nc -z -w5 $IP 22" 2>/dev/null; then
                 echo ""
-                echo "[OK] Mirror-Registry VM is accessible at $IP"
+                echo "[OK] Harbor VM is accessible at $IP"
                 exit 0
             fi
         fi
@@ -405,20 +425,20 @@ wait_for_registry = BashOperator(
         sleep 30
     done
     
-    echo "[WARN] Timeout waiting for Mirror-Registry VM - may still be provisioning"
+    echo "[WARN] Timeout waiting for Harbor VM - may still be provisioning"
     ''',
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
 
 
-# Task: Validate registry is healthy
-validate_registry_health = BashOperator(
-    task_id='validate_registry_health',
+# Task: Validate Harbor is healthy
+validate_harbor_health = BashOperator(
+    task_id='validate_harbor_health',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Validating Mirror-Registry Health"
+    echo "Validating Harbor Health"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -432,35 +452,35 @@ validate_registry_health = BashOperator(
         exit 1
     fi
     
-    echo "Mirror-Registry VM IP: $IP"
+    echo "Harbor VM IP: $IP"
     
-    # Wait for registry to be ready (can take time after VM boots)
-    echo "Waiting for registry service to be ready..."
+    # Wait for Harbor to be ready (can take time after VM boots)
+    echo "Waiting for Harbor service to be ready..."
     MAX_ATTEMPTS=30
     ATTEMPT=0
     
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
         ATTEMPT=$((ATTEMPT + 1))
         
-        # Check Quay health endpoint
+        # Check Harbor health endpoint
         HEALTH=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -sk https://$IP:8443/health/instance 2>/dev/null" || true)
+            "curl -sk https://$IP/api/v2.0/health 2>/dev/null" || true)
         
         if echo "$HEALTH" | grep -qi "healthy"; then
             echo ""
-            echo "[OK] Mirror-Registry is HEALTHY"
+            echo "[OK] Harbor is HEALTHY"
             echo "$HEALTH"
             exit 0
         fi
         
-        echo "Waiting for registry to become healthy... ($ATTEMPT/$MAX_ATTEMPTS)"
+        echo "Waiting for Harbor to become healthy... ($ATTEMPT/$MAX_ATTEMPTS)"
         sleep 30
     done
     
     echo ""
-    echo "[WARN] Registry health check timed out"
-    echo "The registry may still be initializing. Check manually:"
-    echo "  curl -k https://$IP:8443/health/instance"
+    echo "[WARN] Harbor health check timed out"
+    echo "Harbor may still be initializing. Check manually:"
+    echo "  curl -k https://$IP/api/v2.0/health"
     ''',
     execution_timeout=timedelta(minutes=20),
     dag=dag,
@@ -473,7 +493,7 @@ deployment_complete = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Mirror-Registry Deployment Complete"
+    echo "Harbor Deployment Complete"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -484,23 +504,24 @@ deployment_complete = BashOperator(
         "kcli info vm $VM_NAME 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
     
     echo ""
-    echo "Mirror-Registry Details:"
+    echo "Harbor Details:"
     echo "  VM Name: $VM_NAME"
     echo "  IP Address: $IP"
-    echo "  URL: https://mirror-registry.${DOMAIN}:8443"
-    echo "  Health: https://${IP}:8443/health/instance"
+    echo "  URL: https://harbor.${DOMAIN}"
+    echo "  Health: https://${IP}/api/v2.0/health"
     echo ""
-    echo "Login credentials (check VM):"
-    echo "  ssh root@$IP 'cat /root/mirror-registry-offline.log | grep -A2 credentials'"
+    echo "Default credentials:"
+    echo "  User: admin"
+    echo "  Password: Harbor12345"
     echo ""
-    echo "To mirror OpenShift images:"
-    echo "  oc adm release mirror --from=quay.io/openshift-release-dev/ocp-release:<version> \\"
-    echo "      --to=mirror-registry.${DOMAIN}:8443/ocp4/openshift4 \\"
-    echo "      --to-release-image=mirror-registry.${DOMAIN}:8443/ocp4/openshift4:<version>"
+    echo "To push an image:"
+    echo "  docker login harbor.${DOMAIN}"
+    echo "  docker tag myimage:latest harbor.${DOMAIN}/library/myimage:latest"
+    echo "  docker push harbor.${DOMAIN}/library/myimage:latest"
     
     echo ""
     echo "========================================"
-    echo "Mirror-Registry is ready for ocp4-disconnected-helper workflows"
+    echo "Harbor is ready"
     echo "========================================"
     ''',
     dag=dag,
@@ -513,7 +534,7 @@ health_check = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Mirror-Registry Health Check"
+    echo "Harbor Health Check"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -527,20 +548,20 @@ health_check = BashOperator(
         exit 1
     fi
     
-    echo "Mirror-Registry VM: $VM_NAME"
+    echo "Harbor VM: $VM_NAME"
     echo "IP Address: $IP"
     echo ""
     
-    echo "Checking Mirror-Registry health..."
+    echo "Checking Harbor health..."
     HEALTH=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "curl -sk https://$IP:8443/health/instance 2>/dev/null")
+        "curl -sk https://$IP/api/v2.0/health 2>/dev/null")
     
     if echo "$HEALTH" | grep -qi "healthy"; then
-        echo "[OK] Mirror-Registry is HEALTHY"
+        echo "[OK] Harbor is HEALTHY"
         echo "$HEALTH" | jq . 2>/dev/null || echo "$HEALTH"
         exit 0
     else
-        echo "[ERROR] Mirror-Registry is NOT HEALTHY"
+        echo "[ERROR] Harbor is NOT HEALTHY"
         echo "Response: $HEALTH"
         exit 1
     fi
@@ -549,13 +570,13 @@ health_check = BashOperator(
 )
 
 
-# Task: Delete Registry
-delete_registry = BashOperator(
-    task_id='delete_registry',
+# Task: Delete Harbor
+delete_harbor = BashOperator(
+    task_id='delete_harbor',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Deleting Mirror-Registry"
+    echo "Deleting Harbor"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -564,13 +585,13 @@ delete_registry = BashOperator(
     
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
-         cd /opt/kcli-pipelines && \
-         ./mirror-registry/deploy.sh delete" || \
+         cd /opt/qubinode-pipelines && \
+         ./harbor/deploy.sh delete" || \
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "kcli delete vm $VM_NAME -y" || \
         echo "[WARN] VM may not exist"
     
-    echo "[OK] Mirror-Registry deleted"
+    echo "[OK] Harbor deleted"
     ''',
     execution_timeout=timedelta(minutes=10),
     dag=dag,
@@ -583,7 +604,7 @@ check_status = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Mirror-Registry Status"
+    echo "Harbor Status"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -600,7 +621,7 @@ check_status = BashOperator(
         echo ""
         echo "Health Check:"
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -sk https://$IP:8443/health/instance 2>/dev/null" || echo "Health check failed"
+            "curl -sk https://$IP/api/v2.0/health 2>/dev/null" || echo "Health check failed"
     fi
     ''',
     dag=dag,
@@ -644,10 +665,9 @@ register_dns = BashOperator(
     echo "FreeIPA IP: $FREEIPA_IP"
     echo ""
     
-    # Add DNS record using LDAP EXTERNAL auth (via FreeIPA server)
+    # Add DNS record using LDAP EXTERNAL auth
     echo "[INFO] Adding DNS A record via LDAP..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF
-# Add DNS A record using EXTERNAL SASL auth (root access)
 ldapadd -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
 dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
 objectClass: idnsrecord
@@ -656,7 +676,6 @@ idnsname: ${VM_NAME}
 arecord: ${IP}
 LDIF
 
-# If record exists, modify it
 ldapmodify -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
 dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
 changetype: modify
@@ -684,10 +703,12 @@ EOF
 
 # Define task dependencies
 # Main create flow
-decide_action_task >> check_step_ca >> validate_environment >> create_registry
-create_registry >> register_dns >> wait_for_registry >> validate_registry_health >> deployment_complete
+decide_action_task >> check_prerequisites >> validate_environment >> create_harbor
+create_harbor >> register_dns >> wait_for_harbor >> validate_harbor_health >> deployment_complete
 
 # Alternative flows
-decide_action_task >> delete_registry
+decide_action_task >> delete_harbor
 decide_action_task >> check_status
 decide_action_task >> health_check
+
+

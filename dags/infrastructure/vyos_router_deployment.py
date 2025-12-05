@@ -50,7 +50,7 @@ dag = DAG(
 )
 
 # Environment setup
-KCLI_PIPELINES_DIR = Variable.get('KCLI_PIPELINES_DIR', default_var='/opt/kcli-pipelines')
+KCLI_PIPELINES_DIR = Variable.get('KCLI_PIPELINES_DIR', default_var='/opt/qubinode-pipelines')
 DEMO_VIRT_DIR = Variable.get('DEMO_VIRT_DIR', default_var='/opt/demo-virt')
 
 
@@ -263,7 +263,7 @@ create_vyos_vm = BashOperator(
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export ACTION=create && \
          export VYOS_VERSION=$VYOS_VERSION && \
-         cd /opt/kcli-pipelines/vyos-router && \
+         cd /opt/qubinode-pipelines/vyos-router && \
          ./deploy.sh"
     
     echo ""

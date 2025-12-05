@@ -72,7 +72,7 @@ USAGE:
 
 OPTIONS:
     --source DIR      Source directory containing DAGs
-                      Default: <kcli-pipelines>/dags or /opt/kcli-pipelines/dags
+                      Default: <kcli-pipelines>/dags or /opt/qubinode-pipelines/dags
     
     --target DIR      Target Airflow DAGs directory
                       Default: Auto-detect from qubinode_navigator
@@ -181,7 +181,7 @@ detect_source_dir() {
     fi
     
     # Try common locations
-    for dir in /opt/kcli-pipelines/dags /root/kcli-pipelines/dags ~/kcli-pipelines/dags; do
+    for dir in /opt/qubinode-pipelines/dags /root/kcli-pipelines/dags ~/kcli-pipelines/dags; do
         if [ -d "$dir" ]; then
             SOURCE_DIR="$dir"
             return

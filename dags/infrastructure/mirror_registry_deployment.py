@@ -1,27 +1,25 @@
 """
-Airflow DAG: JFrog Artifactory Deployment
+Airflow DAG: Mirror-Registry Deployment (Quay-based)
 kcli-pipelines integration per ADR-0047
 
-This DAG deploys JFrog Artifactory for:
-- Universal artifact repository
-- Docker, Maven, npm, PyPI, and more
-- Enterprise artifact management
+This DAG deploys a Quay-based mirror-registry for:
+- Disconnected OpenShift installs
+- Container image mirroring
+- Air-gapped environments
 
-Editions:
-- oss: Open Source (Docker registry only)
-- pro: Professional (All package types)
-
-Calls: /opt/kcli-pipelines/jfrog/deploy.sh
+Integrates with: Step-CA for TLS certificates
+Calls: /opt/qubinode-pipelines/mirror-registry/deploy.sh
 """
 
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
-JFROG_DIR = f'{KCLI_PIPELINES_DIR}/jfrog'
+KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
+MIRROR_REGISTRY_DIR = f'{KCLI_PIPELINES_DIR}/mirror-registry'
 
 default_args = {
     'owner': 'qubinode',
@@ -34,133 +32,130 @@ default_args = {
 }
 
 dag = DAG(
-    'jfrog_deployment',
+    'mirror_registry_deployment',
     default_args=default_args,
-    description='Deploy JFrog Artifactory universal artifact repository',
+    description='Deploy Quay-based mirror-registry for disconnected OpenShift installs',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'jfrog', 'artifactory', 'registry'],
+    tags=['qubinode', 'kcli-pipelines', 'mirror-registry', 'quay', 'disconnected', 'ocp4-disconnected-helper'],
     params={
         'action': 'create',  # create, delete, status, health
-        'vm_name': 'jfrog',  # VM name
-        'jfrog_version': '7.77.5',  # JFrog Artifactory version
-        'jfrog_edition': 'oss',  # oss or pro
-        'cert_mode': 'step-ca',  # step-ca or self-signed
+        'vm_name': 'mirror-registry',  # VM name
+        'quay_version': 'v2.0.3',  # Quay mirror-registry version (latest stable)
         'domain': 'example.com',  # Domain for certificates
         'target_server': 'localhost',  # Target server
         'network': 'default',  # Primary network (DHCP for management)
         'isolated_network': '1924',  # Isolated network for disconnected OCP
-        'isolated_ip': '192.168.49.30',  # Static IP on isolated network
+        'isolated_ip': '192.168.49.10',  # Static IP on isolated network
         'isolated_gateway': '192.168.49.1',  # Gateway for isolated network
-        'step_ca_vm': 'step-ca-server',  # Step-CA server VM name (for step-ca mode)
+        'step_ca_vm': 'step-ca-server',  # Step-CA server VM name
     },
     doc_md="""
-    # JFrog Artifactory Deployment DAG
+    # Mirror-Registry Deployment DAG
     
-    Deploy JFrog Artifactory universal artifact repository.
+    Deploy a Quay-based mirror-registry for disconnected OpenShift environments.
     
     ## Features
     
-    - Universal artifact repository (Docker, Maven, npm, PyPI, etc.)
-    - Build integration (CI/CD)
-    - Artifact lifecycle management
-    - Security scanning (Pro edition)
-    - RHEL9-based VM with Podman
+    - Lightweight Quay registry for image mirroring
+    - Supports disconnected/air-gapped installs
+    - Integrates with **Step-CA** for TLS certificates
+    - RHEL8-based VM with Podman
+    - **Dual-NIC architecture** for management + isolated network access
     
-    ## Editions
+    ## Architecture
     
-    ### OSS (Open Source)
-    - Docker registry
-    - Generic repository
-    - Free to use
+    ```
+    +------------------+     +------------------+     +------------------+
+    |   Step-CA        | --> | Mirror Registry  | --> | OpenShift        |
+    |   (Certificates) |     | (eth0: mgmt)     |     | (Disconnected)   |
+    +------------------+     | (eth1: isolated) |     +------------------+
+                             +------------------+
+                                    |
+                             +------------------+
+                             |   VyOS Router    |
+                             |  (192.168.49.x)  |
+                             +------------------+
+    ```
     
-    ### Pro (Professional)
-    - All package types (Maven, npm, PyPI, Go, etc.)
-    - Advanced security features
-    - Requires license
+    ## Dual-NIC Network Design
     
-    ## Certificate Modes
-    
-    ### Step-CA (Default)
-    Uses internal Step-CA server for TLS certificates.
-    
-    ### Self-Signed
-    Generates self-signed certificates (not recommended for production).
+    | Interface | Network  | Purpose                    | IP Type  |
+    |-----------|----------|----------------------------|----------|
+    | eth0      | default  | Management/SSH access      | DHCP     |
+    | eth1      | 1924     | Disconnected OCP access    | Static   |
     
     ## Prerequisites
     
-    For Step-CA mode:
-    ```bash
-    airflow dags trigger step_ca_deployment --conf '{"action": "create"}'
-    ```
+    1. **Step-CA Server** must be deployed first for TLS certificates:
+       ```bash
+       airflow dags trigger step_ca_deployment --conf '{"action": "create"}'
+       ```
+    
+    2. **FreeIPA** should be running for DNS registration
+    3. **VyOS Router** should be configured with DHCP on isolated network
     
     ## Parameters
     
     - **action**: create, delete, status, or health
-    - **vm_name**: Name for the VM (default: jfrog)
-    - **jfrog_version**: JFrog Artifactory version
-    - **jfrog_edition**: oss or pro
-    - **cert_mode**: step-ca or self-signed
+    - **vm_name**: Name for the registry VM (default: mirror-registry)
+    - **quay_version**: Quay mirror-registry version
     - **domain**: Domain for certificate generation
+    - **network**: Primary network with DHCP (default: default)
+    - **isolated_network**: Isolated network for OCP (default: 1924)
+    - **isolated_ip**: Static IP on isolated network (default: 192.168.49.10)
+    - **isolated_gateway**: Gateway for isolated network (default: 192.168.49.1)
     - **step_ca_vm**: Name of the Step-CA server VM
     
     ## Usage
     
-    ### Create JFrog OSS
+    ### Create Mirror-Registry with Dual-NIC
     ```bash
-    airflow dags trigger jfrog_deployment --conf '{
+    airflow dags trigger mirror_registry_deployment --conf '{
         "action": "create",
-        "vm_name": "jfrog",
-        "jfrog_version": "7.77.5",
-        "jfrog_edition": "oss"
+        "vm_name": "mirror-registry",
+        "quay_version": "v1.3.11",
+        "network": "default",
+        "isolated_network": "1924",
+        "isolated_ip": "192.168.49.10"
     }'
     ```
     
-    ### Create JFrog Pro
+    ### Check Registry Health
     ```bash
-    airflow dags trigger jfrog_deployment --conf '{
-        "action": "create",
-        "vm_name": "jfrog-pro",
-        "jfrog_version": "7.77.5",
-        "jfrog_edition": "pro"
-    }'
-    ```
-    
-    ### Check JFrog Health
-    ```bash
-    airflow dags trigger jfrog_deployment --conf '{
+    airflow dags trigger mirror_registry_deployment --conf '{
         "action": "health",
-        "vm_name": "jfrog"
+        "vm_name": "mirror-registry"
+    }'
+    ```
+    
+    ### Delete Registry
+    ```bash
+    airflow dags trigger mirror_registry_deployment --conf '{
+        "action": "delete",
+        "vm_name": "mirror-registry"
     }'
     ```
     
     ## Post-Deployment
     
-    After deployment, JFrog will be available at:
-    - **UI**: http://<ip>:8082/ui
-    - **API**: http://<ip>:8082/artifactory
-    - **Default User**: admin
-    - **Default Password**: password
+    After deployment, the registry will be available at:
+    - **URL**: https://mirror-registry.<domain>:8443
+    - **Health**: https://<ip>:8443/health/instance
     
-    ### Configure Docker registry:
+    To mirror OpenShift images:
     ```bash
-    # Add to /etc/containers/registries.conf
-    [[registry]]
-    location = "jfrog.<domain>:8082"
-    insecure = true
-    
-    # Login
-    podman login jfrog.<domain>:8082
-    
-    # Push image
-    podman push myimage:latest jfrog.<domain>:8082/docker-local/myimage:latest
+    oc adm release mirror --from=quay.io/openshift-release-dev/ocp-release:4.14.0-x86_64 \\
+        --to=mirror-registry.<domain>:8443/ocp4/openshift4 \\
+        --to-release-image=mirror-registry.<domain>:8443/ocp4/openshift4:4.14.0-x86_64
     ```
     
     ## Related DAGs
     
-    - `mirror_registry_deployment` - Quay mirror-registry (lighter weight)
-    - `harbor_deployment` - Harbor enterprise registry
-    - `step_ca_deployment` - Certificate authority
+    - `harbor_deployment` - Harbor registry (Let's Encrypt or Step-CA)
+    - `jfrog_deployment` - JFrog Artifactory registry
+    - `ocp_initial_deployment` - OpenShift deployment (uses this registry)
+    - `ocp_incremental_update` - OpenShift updates (uses this registry)
     """,
 )
 
@@ -169,12 +164,12 @@ def decide_action(**context):
     """Branch based on action parameter"""
     action = context['params'].get('action', 'create')
     if action == 'delete':
-        return 'delete_jfrog'
+        return 'delete_registry'
     elif action == 'status':
         return 'check_status'
     elif action == 'health':
         return 'health_check'
-    return 'check_prerequisites'
+    return 'check_step_ca_available'
 
 
 # Task: Decide action
@@ -185,58 +180,56 @@ decide_action_task = BranchPythonOperator(
 )
 
 
-# Task: Check prerequisites
-check_prerequisites = BashOperator(
-    task_id='check_prerequisites',
+# Task: Check Step-CA is available (prerequisite)
+check_step_ca = BashOperator(
+    task_id='check_step_ca_available',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Checking JFrog Prerequisites"
+    echo "Checking Step-CA Prerequisite"
     echo "========================================"
     
-    CERT_MODE="{{ params.cert_mode }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
-    JFROG_EDITION="{{ params.jfrog_edition }}"
     
-    echo "Certificate Mode: $CERT_MODE"
-    echo "JFrog Edition: $JFROG_EDITION"
+    # Check if Step-CA VM exists
+    STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
     
-    if [ "$CERT_MODE" == "step-ca" ]; then
+    if [ -z "$STEP_CA_IP" ] || [ "$STEP_CA_IP" == "None" ]; then
+        echo "[ERROR] Step-CA server not found: $STEP_CA_VM"
         echo ""
-        echo "Checking Step-CA server..."
-        
-        STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
-        
-        if [ -z "$STEP_CA_IP" ] || [ "$STEP_CA_IP" == "None" ]; then
-            echo "[WARN] Step-CA server not found: $STEP_CA_VM"
-            echo "Will use self-signed certificates instead."
-        else
-            echo "[OK] Step-CA server found at: $STEP_CA_IP"
-            
-            # Check Step-CA health
-            if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-                "curl -sk https://$STEP_CA_IP:443/health 2>/dev/null | grep -q ok"; then
-                echo "[OK] Step-CA is healthy"
-            else
-                echo "[WARN] Step-CA may not be responding"
-            fi
-        fi
+        echo "Step-CA is required for registry TLS certificates."
+        echo "Deploy Step-CA first:"
+        echo "  airflow dags trigger step_ca_deployment --conf '{\"action\": \"create\"}'"
+        exit 1
     fi
     
-    # Check RHEL9 image
-    echo ""
-    echo "Checking RHEL9 image..."
+    echo "[OK] Step-CA server found at: $STEP_CA_IP"
+    
+    # Check Step-CA health
+    echo "Checking Step-CA health..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "kcli list image | grep -q rhel9"; then
-        echo "[OK] RHEL9 image available"
+        "curl -sk https://$STEP_CA_IP:443/health 2>/dev/null | grep -q ok"; then
+        echo "[OK] Step-CA is healthy"
     else
-        echo "[WARN] RHEL9 image may not be available"
-        echo "Download with: kcli download image rhel9"
+        echo "[WARN] Step-CA may not be responding - continuing anyway"
+    fi
+    
+    # Get CA fingerprint for later use
+    echo ""
+    echo "Getting CA fingerprint..."
+    FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
+            'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'" || true)
+    
+    if [ -n "$FINGERPRINT" ]; then
+        echo "[OK] CA Fingerprint: $FINGERPRINT"
+    else
+        echo "[WARN] Could not get CA fingerprint - will try during deployment"
     fi
     
     echo ""
-    echo "[OK] Prerequisites check complete"
+    echo "[OK] Step-CA prerequisite check complete"
     ''',
     dag=dag,
 )
@@ -248,12 +241,12 @@ validate_environment = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Validating JFrog Environment"
+    echo "Validating Mirror-Registry Environment"
     echo "========================================"
     
     DOMAIN="{{ params.domain }}"
     
-    echo "Registry Type: JFrog Artifactory"
+    echo "Registry Type: mirror-registry (Quay)"
     echo "Domain: $DOMAIN"
     
     # Check kcli
@@ -265,14 +258,24 @@ validate_environment = BashOperator(
     fi
     echo "[OK] kcli available"
     
-    # Check for JFrog scripts
-    echo "Checking JFrog deployment scripts..."
+    # Check for mirror-registry scripts
+    echo "Checking mirror-registry deployment scripts..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "test -f /opt/kcli-pipelines/jfrog/deploy.sh"; then
-        echo "[OK] JFrog deploy script found"
+        "test -f /opt/qubinode-pipelines/mirror-registry/deploy.sh"; then
+        echo "[OK] Mirror-registry deploy script found"
     else
-        echo "[ERROR] JFrog deploy.sh not found"
+        echo "[ERROR] Mirror-registry deploy.sh not found"
         exit 1
+    fi
+    
+    # Check RHEL8 image
+    echo "Checking RHEL8 image..."
+    if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "ls /var/lib/libvirt/images/rhel8 2>/dev/null" | grep -q rhel; then
+        echo "[OK] RHEL8 image found"
+    else
+        echo "[WARN] RHEL8 image may not be available"
+        echo "Download with: kcli download image rhel8"
     fi
     
     # Check FreeIPA for DNS
@@ -293,19 +296,17 @@ validate_environment = BashOperator(
 )
 
 
-# Task: Create JFrog VM
-create_jfrog = BashOperator(
-    task_id='create_jfrog_vm',
+# Task: Create Mirror-Registry VM
+create_registry = BashOperator(
+    task_id='create_registry_vm',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Creating JFrog Artifactory VM"
+    echo "Creating Mirror-Registry VM (Dual-NIC)"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
-    JFROG_VERSION="{{ params.jfrog_version }}"
-    JFROG_EDITION="{{ params.jfrog_edition }}"
-    CERT_MODE="{{ params.cert_mode }}"
+    QUAY_VERSION="{{ params.quay_version }}"
     DOMAIN="{{ params.domain }}"
     NETWORK="{{ params.network }}"
     ISOLATED_NETWORK="{{ params.isolated_network }}"
@@ -314,10 +315,11 @@ create_jfrog = BashOperator(
     STEP_CA_VM="{{ params.step_ca_vm }}"
     
     echo "VM Name: $VM_NAME"
-    echo "JFrog Version: $JFROG_VERSION"
-    echo "JFrog Edition: $JFROG_EDITION"
-    echo "Certificate Mode: $CERT_MODE"
-    echo "Dual-NIC: $NETWORK (mgmt) + $ISOLATED_NETWORK ($ISOLATED_IP)"
+    echo "Quay Version: $QUAY_VERSION"
+    echo "Primary Network: $NETWORK (DHCP)"
+    echo "Isolated Network: $ISOLATED_NETWORK"
+    echo "Isolated IP: $ISOLATED_IP"
+    echo "Isolated Gateway: $ISOLATED_GATEWAY"
     
     # Check if VM already exists
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
@@ -328,73 +330,52 @@ create_jfrog = BashOperator(
         exit 0
     fi
     
-    # Prepare environment variables based on cert mode
-    if [ "$CERT_MODE" == "step-ca" ]; then
-        STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
-        
-        if [ -n "$STEP_CA_IP" ] && [ "$STEP_CA_IP" != "None" ]; then
-            CA_URL="https://${STEP_CA_IP}:443"
-            
-            FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-                "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
-                    'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'")
-            
-            echo "Step-CA URL: $CA_URL"
-            echo "CA Fingerprint: $FINGERPRINT"
-            
-            # Create JFrog with Step-CA and dual-NIC
-            ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-                "export VM_NAME=$VM_NAME && \
-                 export JFROG_VERSION=$JFROG_VERSION && \
-                 export JFROG_EDITION=$JFROG_EDITION && \
-                 export CERT_MODE=step-ca && \
-                 export CA_URL=$CA_URL && \
-                 export FINGERPRINT=$FINGERPRINT && \
-                 export NET_NAME=$NETWORK && \
-                 export DOMAIN=$DOMAIN && \
-                 export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
-                 export ISOLATED_IP=$ISOLATED_IP && \
-                 export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
-                 cd /opt/kcli-pipelines && \
-                 ./jfrog/deploy.sh create"
-        else
-            echo "[WARN] Step-CA not available, using self-signed"
-            CERT_MODE="self-signed"
-        fi
-    fi
+    # Get Step-CA info
+    STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
     
-    if [ "$CERT_MODE" == "self-signed" ]; then
-        # Create JFrog with self-signed certs and dual-NIC
-        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "export VM_NAME=$VM_NAME && \
-             export JFROG_VERSION=$JFROG_VERSION && \
-             export JFROG_EDITION=$JFROG_EDITION && \
-             export CERT_MODE=self-signed && \
-             export NET_NAME=$NETWORK && \
-             export DOMAIN=$DOMAIN && \
-             export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
-             export ISOLATED_IP=$ISOLATED_IP && \
-             export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
-             cd /opt/kcli-pipelines && \
-             ./jfrog/deploy.sh create"
-    fi
+    CA_URL="https://${STEP_CA_IP}:443"
+    
+    # Get CA fingerprint
+    FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
+            'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'")
+    
+    echo "Step-CA URL: $CA_URL"
+    echo "CA Fingerprint: $FINGERPRINT"
+    
+    # Create mirror-registry with dual-NIC
+    echo "Creating Mirror-Registry with Dual-NIC..."
+    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "export VM_NAME=$VM_NAME && \
+         export QUAY_VERSION=$QUAY_VERSION && \
+         export DOMAIN=$DOMAIN && \
+         export CA_URL=$CA_URL && \
+         export FINGERPRINT=$FINGERPRINT && \
+         export PASSWORD=password && \
+         export STEP_CA_PASSWORD=password && \
+         export NET_NAME=$NETWORK && \
+         export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
+         export ISOLATED_IP=$ISOLATED_IP && \
+         export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
+         cd /opt/qubinode-pipelines && \
+         ./mirror-registry/deploy.sh create"
     
     echo ""
-    echo "[OK] JFrog deployment initiated"
+    echo "[OK] Mirror-Registry deployment initiated with dual-NIC"
     ''',
     execution_timeout=timedelta(minutes=45),
     dag=dag,
 )
 
 
-# Task: Wait for JFrog VM
-wait_for_jfrog = BashOperator(
-    task_id='wait_for_jfrog_vm',
+# Task: Wait for Registry VM
+wait_for_registry = BashOperator(
+    task_id='wait_for_registry_vm',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Waiting for JFrog VM"
+    echo "Waiting for Mirror-Registry VM"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -416,7 +397,7 @@ wait_for_jfrog = BashOperator(
             if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
                 "nc -z -w5 $IP 22" 2>/dev/null; then
                 echo ""
-                echo "[OK] JFrog VM is accessible at $IP"
+                echo "[OK] Mirror-Registry VM is accessible at $IP"
                 exit 0
             fi
         fi
@@ -424,20 +405,20 @@ wait_for_jfrog = BashOperator(
         sleep 30
     done
     
-    echo "[WARN] Timeout waiting for JFrog VM - may still be provisioning"
+    echo "[WARN] Timeout waiting for Mirror-Registry VM - may still be provisioning"
     ''',
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
 
 
-# Task: Validate JFrog is healthy
-validate_jfrog_health = BashOperator(
-    task_id='validate_jfrog_health',
+# Task: Validate registry is healthy
+validate_registry_health = BashOperator(
+    task_id='validate_registry_health',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Validating JFrog Health"
+    echo "Validating Mirror-Registry Health"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -451,35 +432,35 @@ validate_jfrog_health = BashOperator(
         exit 1
     fi
     
-    echo "JFrog VM IP: $IP"
+    echo "Mirror-Registry VM IP: $IP"
     
-    # Wait for Artifactory to be ready (can take 2-3 minutes after VM boots)
-    echo "Waiting for Artifactory service to be ready..."
+    # Wait for registry to be ready (can take time after VM boots)
+    echo "Waiting for registry service to be ready..."
     MAX_ATTEMPTS=30
     ATTEMPT=0
     
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
         ATTEMPT=$((ATTEMPT + 1))
         
-        # Check Artifactory ping endpoint
-        PING=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null" || true)
+        # Check Quay health endpoint
+        HEALTH=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "curl -sk https://$IP:8443/health/instance 2>/dev/null" || true)
         
-        if echo "$PING" | grep -qi "OK"; then
+        if echo "$HEALTH" | grep -qi "healthy"; then
             echo ""
-            echo "[OK] JFrog Artifactory is HEALTHY"
-            echo "Ping: $PING"
+            echo "[OK] Mirror-Registry is HEALTHY"
+            echo "$HEALTH"
             exit 0
         fi
         
-        echo "Waiting for Artifactory to become healthy... ($ATTEMPT/$MAX_ATTEMPTS)"
+        echo "Waiting for registry to become healthy... ($ATTEMPT/$MAX_ATTEMPTS)"
         sleep 30
     done
     
     echo ""
-    echo "[WARN] Artifactory health check timed out"
-    echo "Artifactory may still be initializing. Check manually:"
-    echo "  curl http://$IP:8082/artifactory/api/system/ping"
+    echo "[WARN] Registry health check timed out"
+    echo "The registry may still be initializing. Check manually:"
+    echo "  curl -k https://$IP:8443/health/instance"
     ''',
     execution_timeout=timedelta(minutes=20),
     dag=dag,
@@ -492,36 +473,34 @@ deployment_complete = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "JFrog Artifactory Deployment Complete"
+    echo "Mirror-Registry Deployment Complete"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
     DOMAIN="{{ params.domain }}"
-    JFROG_EDITION="{{ params.jfrog_edition }}"
     
     # Get VM info
     IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "kcli info vm $VM_NAME 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
     
     echo ""
-    echo "JFrog Artifactory Details:"
+    echo "Mirror-Registry Details:"
     echo "  VM Name: $VM_NAME"
     echo "  IP Address: $IP"
-    echo "  Edition: $JFROG_EDITION"
-    echo "  UI URL: http://${IP}:8082/ui"
-    echo "  API URL: http://${IP}:8082/artifactory"
+    echo "  URL: https://mirror-registry.${DOMAIN}:8443"
+    echo "  Health: https://${IP}:8443/health/instance"
     echo ""
-    echo "Default credentials:"
-    echo "  User: admin"
-    echo "  Password: password"
+    echo "Login credentials (check VM):"
+    echo "  ssh root@$IP 'cat /root/mirror-registry-offline.log | grep -A2 credentials'"
     echo ""
-    echo "To configure as Docker registry:"
-    echo "  podman login ${IP}:8082"
-    echo "  podman push myimage:latest ${IP}:8082/docker-local/myimage:latest"
+    echo "To mirror OpenShift images:"
+    echo "  oc adm release mirror --from=quay.io/openshift-release-dev/ocp-release:<version> \\"
+    echo "      --to=mirror-registry.${DOMAIN}:8443/ocp4/openshift4 \\"
+    echo "      --to-release-image=mirror-registry.${DOMAIN}:8443/ocp4/openshift4:<version>"
     
     echo ""
     echo "========================================"
-    echo "JFrog Artifactory is ready"
+    echo "Mirror-Registry is ready for ocp4-disconnected-helper workflows"
     echo "========================================"
     ''',
     dag=dag,
@@ -534,7 +513,7 @@ health_check = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "JFrog Artifactory Health Check"
+    echo "Mirror-Registry Health Check"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -548,27 +527,21 @@ health_check = BashOperator(
         exit 1
     fi
     
-    echo "JFrog VM: $VM_NAME"
+    echo "Mirror-Registry VM: $VM_NAME"
     echo "IP Address: $IP"
     echo ""
     
-    echo "Checking JFrog Artifactory health..."
-    PING=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null")
+    echo "Checking Mirror-Registry health..."
+    HEALTH=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "curl -sk https://$IP:8443/health/instance 2>/dev/null")
     
-    if echo "$PING" | grep -qi "OK"; then
-        echo "[OK] JFrog Artifactory is HEALTHY"
-        echo "Ping: $PING"
-        
-        # Get version info
-        echo ""
-        echo "Version Info:"
-        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -s http://$IP:8082/artifactory/api/system/version 2>/dev/null" | jq . || true
+    if echo "$HEALTH" | grep -qi "healthy"; then
+        echo "[OK] Mirror-Registry is HEALTHY"
+        echo "$HEALTH" | jq . 2>/dev/null || echo "$HEALTH"
         exit 0
     else
-        echo "[ERROR] JFrog Artifactory is NOT HEALTHY"
-        echo "Response: $PING"
+        echo "[ERROR] Mirror-Registry is NOT HEALTHY"
+        echo "Response: $HEALTH"
         exit 1
     fi
     ''',
@@ -576,13 +549,13 @@ health_check = BashOperator(
 )
 
 
-# Task: Delete JFrog
-delete_jfrog = BashOperator(
-    task_id='delete_jfrog',
+# Task: Delete Registry
+delete_registry = BashOperator(
+    task_id='delete_registry',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Deleting JFrog Artifactory"
+    echo "Deleting Mirror-Registry"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -591,13 +564,13 @@ delete_jfrog = BashOperator(
     
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
-         cd /opt/kcli-pipelines && \
-         ./jfrog/deploy.sh delete" || \
+         cd /opt/qubinode-pipelines && \
+         ./mirror-registry/deploy.sh delete" || \
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "kcli delete vm $VM_NAME -y" || \
         echo "[WARN] VM may not exist"
     
-    echo "[OK] JFrog Artifactory deleted"
+    echo "[OK] Mirror-Registry deleted"
     ''',
     execution_timeout=timedelta(minutes=10),
     dag=dag,
@@ -610,7 +583,7 @@ check_status = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "JFrog Artifactory Status"
+    echo "Mirror-Registry Status"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -627,7 +600,7 @@ check_status = BashOperator(
         echo ""
         echo "Health Check:"
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null" || echo "Health check failed"
+            "curl -sk https://$IP:8443/health/instance 2>/dev/null" || echo "Health check failed"
     fi
     ''',
     dag=dag,
@@ -671,9 +644,10 @@ register_dns = BashOperator(
     echo "FreeIPA IP: $FREEIPA_IP"
     echo ""
     
-    # Add DNS record using LDAP EXTERNAL auth
+    # Add DNS record using LDAP EXTERNAL auth (via FreeIPA server)
     echo "[INFO] Adding DNS A record via LDAP..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF
+# Add DNS A record using EXTERNAL SASL auth (root access)
 ldapadd -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
 dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
 objectClass: idnsrecord
@@ -682,6 +656,7 @@ idnsname: ${VM_NAME}
 arecord: ${IP}
 LDIF
 
+# If record exists, modify it
 ldapmodify -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
 dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
 changetype: modify
@@ -709,12 +684,10 @@ EOF
 
 # Define task dependencies
 # Main create flow
-decide_action_task >> check_prerequisites >> validate_environment >> create_jfrog
-create_jfrog >> register_dns >> wait_for_jfrog >> validate_jfrog_health >> deployment_complete
+decide_action_task >> check_step_ca >> validate_environment >> create_registry
+create_registry >> register_dns >> wait_for_registry >> validate_registry_health >> deployment_complete
 
 # Alternative flows
-decide_action_task >> delete_jfrog
+decide_action_task >> delete_registry
 decide_action_task >> check_status
 decide_action_task >> health_check
-
-

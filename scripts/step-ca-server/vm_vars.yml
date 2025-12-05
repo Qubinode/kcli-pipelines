@@ -1,0 +1,16 @@
+# Step-CA Server VM Variables
+# These are example values - actual values come from vault and all.yml
+
+image: rhel9
+user: cloud-user
+user_password: changeme
+disk_size: 50
+numcpus: 4
+memory: 8192
+net_name: default
+rhnorg: your-org-id
+rhnactivationkey: your-activation-key
+reservedns: 192.168.122.161
+domainname: example.com
+initial_password: password
+freeipa_dns: 192.168.122.161

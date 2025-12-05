@@ -10,7 +10,7 @@ This DAG deploys VMs using kcli profiles. Supports:
 - OpenShift Jumpbox
 - And other kcli profiles
 
-Calls: /opt/kcli-pipelines/deploy-vm.sh
+Calls: /opt/qubinode-pipelines/deploy-vm.sh
 """
 
 from datetime import datetime, timedelta
@@ -19,7 +19,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
+KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
 
 default_args = {
     'owner': 'qubinode',
@@ -165,7 +165,7 @@ configure_profile = BashOperator(
     echo "Community Version: $COMMUNITY_VERSION"
     
     # Check if profile-specific configuration exists
-    PROFILE_CONFIG="/opt/kcli-pipelines/${VM_PROFILE}/configure-kcli-profile.sh"
+    PROFILE_CONFIG="/opt/qubinode-pipelines/${VM_PROFILE}/configure-kcli-profile.sh"
     
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "if [ -f '$PROFILE_CONFIG' ]; then
@@ -174,7 +174,7 @@ configure_profile = BashOperator(
             export COMMUNITY_VERSION=$COMMUNITY_VERSION
             export TARGET_SERVER=$TARGET_SERVER
             export CICD_PIPELINE=true
-            cd /opt/kcli-pipelines
+            cd /opt/qubinode-pipelines
             source helper_scripts/default.env 2>/dev/null || true
             bash $PROFILE_CONFIG
         else
@@ -228,7 +228,7 @@ create_vm = BashOperator(
          export COMMUNITY_VERSION=$COMMUNITY_VERSION && \
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./deploy-vm.sh"
     
     echo ""
@@ -371,7 +371,7 @@ delete_vm = BashOperator(
          export ACTION=delete && \
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./deploy-vm.sh"
     
     echo "[OK] VM deleted"

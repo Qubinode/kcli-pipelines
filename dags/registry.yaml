@@ -1,0 +1,148 @@
+# DAG Registry for qubinode-pipelines
+# Version: 1.0
+# 
+# This registry tracks all deployment DAGs contributed to qubinode-pipelines.
+# External projects (like ocp4-disconnected-helper) contribute DAGs via PR.
+#
+# Related ADRs:
+# - ADR-0061: Multi-Repository Architecture
+# - ADR-0062: External Project Integration Guide
+# - ADR-0040: DAG Distribution
+# - ADR-0047: Deployment Script Repository
+
+version: "1.0"
+
+categories:
+  infrastructure:
+    description: "Core infrastructure services (DNS, networking, VMs, certificates)"
+    dags:
+      - name: freeipa_deployment
+        file: infrastructure/freeipa_deployment.py
+        description: "FreeIPA Identity Management Server deployment for DNS and user management"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - kcli installed
+          - vault.yml with admin password
+        
+      - name: freeipa_dns_management
+        file: infrastructure/freeipa_dns_management.py
+        description: "Manage DNS records in FreeIPA (add, delete, list)"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - FreeIPA server deployed
+        
+      - name: vyos_router_deployment
+        file: infrastructure/vyos_router_deployment.py
+        description: "VyOS router deployment for network segmentation and routing"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - virsh/libvirt configured
+          - VyOS ISO downloaded
+        
+      - name: generic_vm_deployment
+        file: infrastructure/generic_vm_deployment.py
+        description: "Generic VM deployment supporting RHEL, Fedora, Ubuntu, CentOS"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - kcli installed
+          - Base OS images
+          - FreeIPA for DNS (optional)
+        
+      - name: step_ca_deployment
+        file: infrastructure/step_ca_deployment.py
+        description: "Step-CA certificate authority for internal PKI and disconnected installs"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - kcli installed
+          - Base OS images
+        
+      - name: step_ca_operations
+        file: infrastructure/step_ca_operations.py
+        description: "Certificate operations: request, renew, revoke, bootstrap clients"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - Step-CA server deployed
+        
+      - name: mirror_registry_deployment
+        file: infrastructure/mirror_registry_deployment.py
+        description: "Mirror Registry (Quay) deployment for disconnected OpenShift"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - kcli installed
+          - Step-CA deployed (optional)
+        
+      - name: harbor_deployment
+        file: infrastructure/harbor_deployment.py
+        description: "Harbor enterprise container registry deployment"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - kcli installed
+          - Step-CA or Let's Encrypt
+        
+      - name: jfrog_deployment
+        file: infrastructure/jfrog_deployment.py
+        description: "JFrog Artifactory deployment for artifact management"
+        contributed_by: kcli-pipelines
+        status: tested
+        prerequisites:
+          - kcli installed
+        
+      - name: jumpserver_deployment
+        file: infrastructure/jumpserver_deployment.py
+        description: "Apache Guacamole jumpserver for browser-based VM access"
+        contributed_by: kcli-pipelines
+        status: planned
+        prerequisites:
+          - kcli installed
+          - VMs to access
+
+  ocp:
+    description: "OpenShift cluster deployment and management DAGs"
+    dags: []
+    # External projects like ocp4-disconnected-helper will contribute DAGs here
+    # Expected DAGs:
+    # - ocp_initial_deployment
+    # - ocp_agent_deployment
+    # - ocp_disconnected_workflow
+    # - ocp_incremental_update
+    # - ocp_pre_deployment_validation
+    # - ocp_registry_sync
+
+  networking:
+    description: "Network configuration and management DAGs"
+    dags: []
+    # Future network-focused DAGs
+
+  storage:
+    description: "Storage cluster deployment and management DAGs"
+    dags: []
+    # Future storage DAGs (Ceph, NFS, etc.)
+
+  security:
+    description: "Security scanning, compliance, and hardening DAGs"
+    dags: []
+    # Future security-focused DAGs
+
+# Contribution Guidelines:
+# 1. Develop and test DAGs in your project repository
+# 2. Validate with qubinode_navigator tools:
+#    - ./airflow/scripts/validate-dag.sh your_dag.py
+#    - ./airflow/scripts/lint-dags.sh your_dag.py
+# 3. Submit PR with:
+#    - DAG file in appropriate category directory
+#    - Update to this registry.yaml
+#    - Validation evidence in PR description
+# 4. Follow DAG standards from ADR-0045:
+#    - Use snake_case for DAG ID and filename
+#    - Use """ for bash_command (never ''')
+#    - Use SSH pattern for host execution
+#    - Use ASCII-only output: [OK], [ERROR], [WARN], [INFO]
+#    - Include proper docstring with category

@@ -10,7 +10,7 @@ This DAG deploys a Step-CA certificate authority server for:
 
 Integrates with: ocp4-disconnected-helper
 
-Calls: /opt/kcli-pipelines/step-ca-server/ scripts
+Calls: /opt/qubinode-pipelines/step-ca-server/ scripts
 """
 
 from datetime import datetime, timedelta
@@ -19,7 +19,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
+KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
 STEP_CA_DIR = f'{KCLI_PIPELINES_DIR}/step-ca-server'
 
 default_args = {
@@ -142,10 +142,10 @@ validate_environment = BashOperator(
     # Check for step-ca-server scripts
     echo "Checking Step-CA scripts..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "test -d /opt/kcli-pipelines/step-ca-server"; then
+        "test -d /opt/qubinode-pipelines/step-ca-server"; then
         echo "[OK] Step-CA scripts found"
     else
-        echo "[ERROR] Step-CA scripts not found at /opt/kcli-pipelines/step-ca-server"
+        echo "[ERROR] Step-CA scripts not found at /opt/qubinode-pipelines/step-ca-server"
         exit 1
     fi
     
@@ -192,7 +192,7 @@ configure_profile = BashOperator(
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
          export CUSTOM_PROFILE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          source helper_scripts/default.env 2>/dev/null || true && \
          bash step-ca-server/configure-kcli-profile.sh"
     
@@ -234,7 +234,7 @@ create_step_ca = BashOperator(
          export COMMUNITY_VERSION={{ params.community_version }} && \
          export INITIAL_PASSWORD=password && \
          export NET_NAME={{ params.network }} && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./step-ca-server/deploy.sh create" || true
     
     # Verify VM was created
@@ -335,7 +335,7 @@ configure_step_ca = BashOperator(
     # Copy local configuration script to VM and run it
     echo "Copying and running Step-CA configuration..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "scp -o StrictHostKeyChecking=no /opt/kcli-pipelines/step-ca-server/configure-step-ca-local.sh cloud-user@$IP:/tmp/ && \
+        "scp -o StrictHostKeyChecking=no /opt/qubinode-pipelines/step-ca-server/configure-step-ca-local.sh cloud-user@$IP:/tmp/ && \
          ssh -o StrictHostKeyChecking=no cloud-user@$IP 'echo password | sudo tee /tmp/initial_password > /dev/null && \
          chmod +x /tmp/configure-step-ca-local.sh && \
          sudo /tmp/configure-step-ca-local.sh $DOMAIN $FREEIPA_IP'"
@@ -476,7 +476,7 @@ delete_step_ca = BashOperator(
          export ACTION=delete && \
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./deploy-vm.sh"
     
     echo "[OK] Step-CA server deleted"

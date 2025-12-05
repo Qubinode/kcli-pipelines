@@ -1,18 +1,17 @@
 """
-Airflow DAG: Harbor Registry Deployment
+Airflow DAG: JFrog Artifactory Deployment
 kcli-pipelines integration per ADR-0047
 
-This DAG deploys Harbor container registry for:
-- Enterprise container image management
-- Image scanning and signing
-- Multi-tenant registry
-- Helm chart repository
+This DAG deploys JFrog Artifactory for:
+- Universal artifact repository
+- Docker, Maven, npm, PyPI, and more
+- Enterprise artifact management
 
-Certificate modes:
-- step-ca: Use internal Step-CA for certificates (default)
-- letsencrypt: Use Let's Encrypt via AWS Route53
+Editions:
+- oss: Open Source (Docker registry only)
+- pro: Professional (All package types)
 
-Calls: /opt/kcli-pipelines/harbor/deploy.sh
+Calls: /opt/qubinode-pipelines/jfrog/deploy.sh
 """
 
 from datetime import datetime, timedelta
@@ -21,8 +20,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
-HARBOR_DIR = f'{KCLI_PIPELINES_DIR}/harbor'
+KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
+JFROG_DIR = f'{KCLI_PIPELINES_DIR}/jfrog'
 
 default_args = {
     'owner': 'qubinode',
@@ -35,122 +34,133 @@ default_args = {
 }
 
 dag = DAG(
-    'harbor_deployment',
+    'jfrog_deployment',
     default_args=default_args,
-    description='Deploy Harbor enterprise container registry',
+    description='Deploy JFrog Artifactory universal artifact repository',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'harbor', 'registry', 'enterprise'],
+    tags=['qubinode', 'kcli-pipelines', 'jfrog', 'artifactory', 'registry'],
     params={
         'action': 'create',  # create, delete, status, health
-        'vm_name': 'harbor',  # VM name
-        'harbor_version': 'v2.10.1',  # Harbor version
-        'cert_mode': 'step-ca',  # step-ca or letsencrypt
+        'vm_name': 'jfrog',  # VM name
+        'jfrog_version': '7.77.5',  # JFrog Artifactory version
+        'jfrog_edition': 'oss',  # oss or pro
+        'cert_mode': 'step-ca',  # step-ca or self-signed
         'domain': 'example.com',  # Domain for certificates
         'target_server': 'localhost',  # Target server
-        'network': 'qubinet',  # Network to deploy on
+        'network': 'default',  # Primary network (DHCP for management)
+        'isolated_network': '1924',  # Isolated network for disconnected OCP
+        'isolated_ip': '192.168.49.30',  # Static IP on isolated network
+        'isolated_gateway': '192.168.49.1',  # Gateway for isolated network
         'step_ca_vm': 'step-ca-server',  # Step-CA server VM name (for step-ca mode)
-        'email': '',  # Email for Let's Encrypt (for letsencrypt mode)
     },
     doc_md="""
-    # Harbor Registry Deployment DAG
+    # JFrog Artifactory Deployment DAG
     
-    Deploy Harbor enterprise container registry.
+    Deploy JFrog Artifactory universal artifact repository.
     
     ## Features
     
-    - Enterprise-grade container registry
-    - Image scanning and vulnerability analysis
-    - Image signing and trust
-    - Multi-tenant support with RBAC
-    - Helm chart repository
-    - Docker Hub proxy cache
-    - Ubuntu-based VM with Docker
+    - Universal artifact repository (Docker, Maven, npm, PyPI, etc.)
+    - Build integration (CI/CD)
+    - Artifact lifecycle management
+    - Security scanning (Pro edition)
+    - RHEL9-based VM with Podman
+    
+    ## Editions
+    
+    ### OSS (Open Source)
+    - Docker registry
+    - Generic repository
+    - Free to use
+    
+    ### Pro (Professional)
+    - All package types (Maven, npm, PyPI, Go, etc.)
+    - Advanced security features
+    - Requires license
     
     ## Certificate Modes
     
     ### Step-CA (Default)
-    Uses internal Step-CA server for TLS certificates:
-    - Ideal for disconnected/air-gapped environments
-    - Requires Step-CA server deployed first
+    Uses internal Step-CA server for TLS certificates.
     
-    ### Let's Encrypt
-    Uses Let's Encrypt via AWS Route53 DNS validation:
-    - Requires AWS credentials
-    - Requires public DNS (Route53)
-    - Ideal for internet-connected environments
+    ### Self-Signed
+    Generates self-signed certificates (not recommended for production).
     
     ## Prerequisites
     
-    ### For Step-CA mode:
+    For Step-CA mode:
     ```bash
     airflow dags trigger step_ca_deployment --conf '{"action": "create"}'
     ```
     
-    ### For Let's Encrypt mode:
-    - AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in vault
-    - Route53 DNS zone for your domain
-    
     ## Parameters
     
     - **action**: create, delete, status, or health
-    - **vm_name**: Name for the registry VM (default: harbor)
-    - **harbor_version**: Harbor version
-    - **cert_mode**: step-ca or letsencrypt
+    - **vm_name**: Name for the VM (default: jfrog)
+    - **jfrog_version**: JFrog Artifactory version
+    - **jfrog_edition**: oss or pro
+    - **cert_mode**: step-ca or self-signed
     - **domain**: Domain for certificate generation
-    - **step_ca_vm**: Name of the Step-CA server VM (step-ca mode)
-    - **email**: Email for Let's Encrypt (letsencrypt mode)
+    - **step_ca_vm**: Name of the Step-CA server VM
     
     ## Usage
     
-    ### Create Harbor with Step-CA
+    ### Create JFrog OSS
     ```bash
-    airflow dags trigger harbor_deployment --conf '{
+    airflow dags trigger jfrog_deployment --conf '{
         "action": "create",
-        "vm_name": "harbor",
-        "harbor_version": "v2.10.1",
-        "cert_mode": "step-ca"
+        "vm_name": "jfrog",
+        "jfrog_version": "7.77.5",
+        "jfrog_edition": "oss"
     }'
     ```
     
-    ### Create Harbor with Let's Encrypt
+    ### Create JFrog Pro
     ```bash
-    airflow dags trigger harbor_deployment --conf '{
+    airflow dags trigger jfrog_deployment --conf '{
         "action": "create",
-        "vm_name": "harbor",
-        "harbor_version": "v2.10.1",
-        "cert_mode": "letsencrypt",
-        "email": "admin@example.com"
+        "vm_name": "jfrog-pro",
+        "jfrog_version": "7.77.5",
+        "jfrog_edition": "pro"
     }'
     ```
     
-    ### Check Harbor Health
+    ### Check JFrog Health
     ```bash
-    airflow dags trigger harbor_deployment --conf '{
+    airflow dags trigger jfrog_deployment --conf '{
         "action": "health",
-        "vm_name": "harbor"
+        "vm_name": "jfrog"
     }'
     ```
     
     ## Post-Deployment
     
-    After deployment, Harbor will be available at:
-    - **URL**: https://harbor.<domain>
+    After deployment, JFrog will be available at:
+    - **UI**: http://<ip>:8082/ui
+    - **API**: http://<ip>:8082/artifactory
     - **Default User**: admin
-    - **Default Password**: Harbor12345
+    - **Default Password**: password
     
-    ### Push an image:
+    ### Configure Docker registry:
     ```bash
-    docker login harbor.<domain>
-    docker tag myimage:latest harbor.<domain>/library/myimage:latest
-    docker push harbor.<domain>/library/myimage:latest
+    # Add to /etc/containers/registries.conf
+    [[registry]]
+    location = "jfrog.<domain>:8082"
+    insecure = true
+    
+    # Login
+    podman login jfrog.<domain>:8082
+    
+    # Push image
+    podman push myimage:latest jfrog.<domain>:8082/docker-local/myimage:latest
     ```
     
     ## Related DAGs
     
     - `mirror_registry_deployment` - Quay mirror-registry (lighter weight)
-    - `jfrog_deployment` - JFrog Artifactory
-    - `step_ca_deployment` - Certificate authority (prerequisite for step-ca mode)
+    - `harbor_deployment` - Harbor enterprise registry
+    - `step_ca_deployment` - Certificate authority
     """,
 )
 
@@ -159,7 +169,7 @@ def decide_action(**context):
     """Branch based on action parameter"""
     action = context['params'].get('action', 'create')
     if action == 'delete':
-        return 'delete_harbor'
+        return 'delete_jfrog'
     elif action == 'status':
         return 'check_status'
     elif action == 'health':
@@ -175,20 +185,21 @@ decide_action_task = BranchPythonOperator(
 )
 
 
-# Task: Check prerequisites (Step-CA or Let's Encrypt)
+# Task: Check prerequisites
 check_prerequisites = BashOperator(
     task_id='check_prerequisites',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Checking Harbor Prerequisites"
+    echo "Checking JFrog Prerequisites"
     echo "========================================"
     
     CERT_MODE="{{ params.cert_mode }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
-    EMAIL="{{ params.email }}"
+    JFROG_EDITION="{{ params.jfrog_edition }}"
     
     echo "Certificate Mode: $CERT_MODE"
+    echo "JFrog Edition: $JFROG_EDITION"
     
     if [ "$CERT_MODE" == "step-ca" ]; then
         echo ""
@@ -198,51 +209,30 @@ check_prerequisites = BashOperator(
             "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
         
         if [ -z "$STEP_CA_IP" ] || [ "$STEP_CA_IP" == "None" ]; then
-            echo "[ERROR] Step-CA server not found: $STEP_CA_VM"
-            echo ""
-            echo "Step-CA is required for Harbor TLS certificates in step-ca mode."
-            echo "Deploy Step-CA first:"
-            echo "  airflow dags trigger step_ca_deployment --conf '{\"action\": \"create\"}'"
-            echo ""
-            echo "Or use Let's Encrypt mode:"
-            echo "  airflow dags trigger harbor_deployment --conf '{\"cert_mode\": \"letsencrypt\", \"email\": \"you@example.com\"}'"
-            exit 1
-        fi
-        
-        echo "[OK] Step-CA server found at: $STEP_CA_IP"
-        
-        # Check Step-CA health
-        if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -sk https://$STEP_CA_IP:443/health 2>/dev/null | grep -q ok"; then
-            echo "[OK] Step-CA is healthy"
+            echo "[WARN] Step-CA server not found: $STEP_CA_VM"
+            echo "Will use self-signed certificates instead."
         else
-            echo "[WARN] Step-CA may not be responding"
+            echo "[OK] Step-CA server found at: $STEP_CA_IP"
+            
+            # Check Step-CA health
+            if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+                "curl -sk https://$STEP_CA_IP:443/health 2>/dev/null | grep -q ok"; then
+                echo "[OK] Step-CA is healthy"
+            else
+                echo "[WARN] Step-CA may not be responding"
+            fi
         fi
-        
-    elif [ "$CERT_MODE" == "letsencrypt" ]; then
-        echo ""
-        echo "Checking Let's Encrypt prerequisites..."
-        
-        if [ -z "$EMAIL" ]; then
-            echo "[ERROR] Email is required for Let's Encrypt mode"
-            echo "Set the 'email' parameter when triggering the DAG"
-            exit 1
-        fi
-        echo "[OK] Email provided: $EMAIL"
-        
-        # Note: AWS credentials will be checked during deployment from vault
-        echo "[INFO] AWS credentials will be loaded from vault during deployment"
     fi
     
-    # Check Ubuntu image
+    # Check RHEL9 image
     echo ""
-    echo "Checking Ubuntu image..."
+    echo "Checking RHEL9 image..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "kcli list image | grep -q ubuntu2204"; then
-        echo "[OK] Ubuntu 22.04 image available"
+        "kcli list image | grep -q rhel9"; then
+        echo "[OK] RHEL9 image available"
     else
-        echo "[WARN] Ubuntu 22.04 image may not be available"
-        echo "Download with: kcli download image ubuntu2204"
+        echo "[WARN] RHEL9 image may not be available"
+        echo "Download with: kcli download image rhel9"
     fi
     
     echo ""
@@ -258,12 +248,12 @@ validate_environment = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Validating Harbor Environment"
+    echo "Validating JFrog Environment"
     echo "========================================"
     
     DOMAIN="{{ params.domain }}"
     
-    echo "Registry Type: Harbor"
+    echo "Registry Type: JFrog Artifactory"
     echo "Domain: $DOMAIN"
     
     # Check kcli
@@ -275,13 +265,13 @@ validate_environment = BashOperator(
     fi
     echo "[OK] kcli available"
     
-    # Check for Harbor scripts
-    echo "Checking Harbor deployment scripts..."
+    # Check for JFrog scripts
+    echo "Checking JFrog deployment scripts..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "test -f /opt/kcli-pipelines/harbor/deploy.sh"; then
-        echo "[OK] Harbor deploy script found"
+        "test -f /opt/qubinode-pipelines/jfrog/deploy.sh"; then
+        echo "[OK] JFrog deploy script found"
     else
-        echo "[ERROR] Harbor deploy.sh not found"
+        echo "[ERROR] JFrog deploy.sh not found"
         exit 1
     fi
     
@@ -303,17 +293,18 @@ validate_environment = BashOperator(
 )
 
 
-# Task: Create Harbor VM
-create_harbor = BashOperator(
-    task_id='create_harbor_vm',
+# Task: Create JFrog VM
+create_jfrog = BashOperator(
+    task_id='create_jfrog_vm',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Creating Harbor VM"
+    echo "Creating JFrog Artifactory VM"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
-    HARBOR_VERSION="{{ params.harbor_version }}"
+    JFROG_VERSION="{{ params.jfrog_version }}"
+    JFROG_EDITION="{{ params.jfrog_edition }}"
     CERT_MODE="{{ params.cert_mode }}"
     DOMAIN="{{ params.domain }}"
     NETWORK="{{ params.network }}"
@@ -321,10 +312,10 @@ create_harbor = BashOperator(
     ISOLATED_IP="{{ params.isolated_ip }}"
     ISOLATED_GATEWAY="{{ params.isolated_gateway }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
-    EMAIL="{{ params.email }}"
     
     echo "VM Name: $VM_NAME"
-    echo "Harbor Version: $HARBOR_VERSION"
+    echo "JFrog Version: $JFROG_VERSION"
+    echo "JFrog Edition: $JFROG_EDITION"
     echo "Certificate Mode: $CERT_MODE"
     echo "Dual-NIC: $NETWORK (mgmt) + $ISOLATED_NETWORK ($ISOLATED_IP)"
     
@@ -342,60 +333,68 @@ create_harbor = BashOperator(
         STEP_CA_IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "kcli info vm $STEP_CA_VM 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
         
-        CA_URL="https://${STEP_CA_IP}:443"
-        
-        FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
-                'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'")
-        
-        echo "Step-CA URL: $CA_URL"
-        echo "CA Fingerprint: $FINGERPRINT"
-        
-        # Create Harbor with Step-CA and dual-NIC
+        if [ -n "$STEP_CA_IP" ] && [ "$STEP_CA_IP" != "None" ]; then
+            CA_URL="https://${STEP_CA_IP}:443"
+            
+            FINGERPRINT=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+                "ssh -o StrictHostKeyChecking=no cloud-user@$STEP_CA_IP \
+                    'sudo step certificate fingerprint /root/.step/certs/root_ca.crt 2>/dev/null'")
+            
+            echo "Step-CA URL: $CA_URL"
+            echo "CA Fingerprint: $FINGERPRINT"
+            
+            # Create JFrog with Step-CA and dual-NIC
+            ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+                "export VM_NAME=$VM_NAME && \
+                 export JFROG_VERSION=$JFROG_VERSION && \
+                 export JFROG_EDITION=$JFROG_EDITION && \
+                 export CERT_MODE=step-ca && \
+                 export CA_URL=$CA_URL && \
+                 export FINGERPRINT=$FINGERPRINT && \
+                 export NET_NAME=$NETWORK && \
+                 export DOMAIN=$DOMAIN && \
+                 export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
+                 export ISOLATED_IP=$ISOLATED_IP && \
+                 export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
+                 cd /opt/qubinode-pipelines && \
+                 ./jfrog/deploy.sh create"
+        else
+            echo "[WARN] Step-CA not available, using self-signed"
+            CERT_MODE="self-signed"
+        fi
+    fi
+    
+    if [ "$CERT_MODE" == "self-signed" ]; then
+        # Create JFrog with self-signed certs and dual-NIC
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "export VM_NAME=$VM_NAME && \
-             export HARBOR_VERSION=$HARBOR_VERSION && \
-             export CERT_MODE=step-ca && \
-             export CA_URL=$CA_URL && \
-             export FINGERPRINT=$FINGERPRINT && \
+             export JFROG_VERSION=$JFROG_VERSION && \
+             export JFROG_EDITION=$JFROG_EDITION && \
+             export CERT_MODE=self-signed && \
              export NET_NAME=$NETWORK && \
              export DOMAIN=$DOMAIN && \
              export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
              export ISOLATED_IP=$ISOLATED_IP && \
              export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
-             cd /opt/kcli-pipelines && \
-             ./harbor/deploy.sh create"
-    else
-        # Create Harbor with Let's Encrypt and dual-NIC
-        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "export VM_NAME=$VM_NAME && \
-             export HARBOR_VERSION=$HARBOR_VERSION && \
-             export CERT_MODE=letsencrypt && \
-             export EMAIL=$EMAIL && \
-             export NET_NAME=$NETWORK && \
-             export DOMAIN=$DOMAIN && \
-             export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
-             export ISOLATED_IP=$ISOLATED_IP && \
-             export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
-             cd /opt/kcli-pipelines && \
-             ./harbor/deploy.sh create"
+             cd /opt/qubinode-pipelines && \
+             ./jfrog/deploy.sh create"
     fi
     
     echo ""
-    echo "[OK] Harbor deployment initiated"
+    echo "[OK] JFrog deployment initiated"
     ''',
     execution_timeout=timedelta(minutes=45),
     dag=dag,
 )
 
 
-# Task: Wait for Harbor VM
-wait_for_harbor = BashOperator(
-    task_id='wait_for_harbor_vm',
+# Task: Wait for JFrog VM
+wait_for_jfrog = BashOperator(
+    task_id='wait_for_jfrog_vm',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Waiting for Harbor VM"
+    echo "Waiting for JFrog VM"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -417,7 +416,7 @@ wait_for_harbor = BashOperator(
             if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
                 "nc -z -w5 $IP 22" 2>/dev/null; then
                 echo ""
-                echo "[OK] Harbor VM is accessible at $IP"
+                echo "[OK] JFrog VM is accessible at $IP"
                 exit 0
             fi
         fi
@@ -425,20 +424,20 @@ wait_for_harbor = BashOperator(
         sleep 30
     done
     
-    echo "[WARN] Timeout waiting for Harbor VM - may still be provisioning"
+    echo "[WARN] Timeout waiting for JFrog VM - may still be provisioning"
     ''',
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
 
 
-# Task: Validate Harbor is healthy
-validate_harbor_health = BashOperator(
-    task_id='validate_harbor_health',
+# Task: Validate JFrog is healthy
+validate_jfrog_health = BashOperator(
+    task_id='validate_jfrog_health',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Validating Harbor Health"
+    echo "Validating JFrog Health"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -452,35 +451,35 @@ validate_harbor_health = BashOperator(
         exit 1
     fi
     
-    echo "Harbor VM IP: $IP"
+    echo "JFrog VM IP: $IP"
     
-    # Wait for Harbor to be ready (can take time after VM boots)
-    echo "Waiting for Harbor service to be ready..."
+    # Wait for Artifactory to be ready (can take 2-3 minutes after VM boots)
+    echo "Waiting for Artifactory service to be ready..."
     MAX_ATTEMPTS=30
     ATTEMPT=0
     
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
         ATTEMPT=$((ATTEMPT + 1))
         
-        # Check Harbor health endpoint
-        HEALTH=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -sk https://$IP/api/v2.0/health 2>/dev/null" || true)
+        # Check Artifactory ping endpoint
+        PING=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null" || true)
         
-        if echo "$HEALTH" | grep -qi "healthy"; then
+        if echo "$PING" | grep -qi "OK"; then
             echo ""
-            echo "[OK] Harbor is HEALTHY"
-            echo "$HEALTH"
+            echo "[OK] JFrog Artifactory is HEALTHY"
+            echo "Ping: $PING"
             exit 0
         fi
         
-        echo "Waiting for Harbor to become healthy... ($ATTEMPT/$MAX_ATTEMPTS)"
+        echo "Waiting for Artifactory to become healthy... ($ATTEMPT/$MAX_ATTEMPTS)"
         sleep 30
     done
     
     echo ""
-    echo "[WARN] Harbor health check timed out"
-    echo "Harbor may still be initializing. Check manually:"
-    echo "  curl -k https://$IP/api/v2.0/health"
+    echo "[WARN] Artifactory health check timed out"
+    echo "Artifactory may still be initializing. Check manually:"
+    echo "  curl http://$IP:8082/artifactory/api/system/ping"
     ''',
     execution_timeout=timedelta(minutes=20),
     dag=dag,
@@ -493,35 +492,36 @@ deployment_complete = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Harbor Deployment Complete"
+    echo "JFrog Artifactory Deployment Complete"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
     DOMAIN="{{ params.domain }}"
+    JFROG_EDITION="{{ params.jfrog_edition }}"
     
     # Get VM info
     IP=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "kcli info vm $VM_NAME 2>/dev/null | grep 'ip:' | awk '{print \$2}' | head -1")
     
     echo ""
-    echo "Harbor Details:"
+    echo "JFrog Artifactory Details:"
     echo "  VM Name: $VM_NAME"
     echo "  IP Address: $IP"
-    echo "  URL: https://harbor.${DOMAIN}"
-    echo "  Health: https://${IP}/api/v2.0/health"
+    echo "  Edition: $JFROG_EDITION"
+    echo "  UI URL: http://${IP}:8082/ui"
+    echo "  API URL: http://${IP}:8082/artifactory"
     echo ""
     echo "Default credentials:"
     echo "  User: admin"
-    echo "  Password: Harbor12345"
+    echo "  Password: password"
     echo ""
-    echo "To push an image:"
-    echo "  docker login harbor.${DOMAIN}"
-    echo "  docker tag myimage:latest harbor.${DOMAIN}/library/myimage:latest"
-    echo "  docker push harbor.${DOMAIN}/library/myimage:latest"
+    echo "To configure as Docker registry:"
+    echo "  podman login ${IP}:8082"
+    echo "  podman push myimage:latest ${IP}:8082/docker-local/myimage:latest"
     
     echo ""
     echo "========================================"
-    echo "Harbor is ready"
+    echo "JFrog Artifactory is ready"
     echo "========================================"
     ''',
     dag=dag,
@@ -534,7 +534,7 @@ health_check = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Harbor Health Check"
+    echo "JFrog Artifactory Health Check"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -548,21 +548,27 @@ health_check = BashOperator(
         exit 1
     fi
     
-    echo "Harbor VM: $VM_NAME"
+    echo "JFrog VM: $VM_NAME"
     echo "IP Address: $IP"
     echo ""
     
-    echo "Checking Harbor health..."
-    HEALTH=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "curl -sk https://$IP/api/v2.0/health 2>/dev/null")
+    echo "Checking JFrog Artifactory health..."
+    PING=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+        "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null")
     
-    if echo "$HEALTH" | grep -qi "healthy"; then
-        echo "[OK] Harbor is HEALTHY"
-        echo "$HEALTH" | jq . 2>/dev/null || echo "$HEALTH"
+    if echo "$PING" | grep -qi "OK"; then
+        echo "[OK] JFrog Artifactory is HEALTHY"
+        echo "Ping: $PING"
+        
+        # Get version info
+        echo ""
+        echo "Version Info:"
+        ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
+            "curl -s http://$IP:8082/artifactory/api/system/version 2>/dev/null" | jq . || true
         exit 0
     else
-        echo "[ERROR] Harbor is NOT HEALTHY"
-        echo "Response: $HEALTH"
+        echo "[ERROR] JFrog Artifactory is NOT HEALTHY"
+        echo "Response: $PING"
         exit 1
     fi
     ''',
@@ -570,13 +576,13 @@ health_check = BashOperator(
 )
 
 
-# Task: Delete Harbor
-delete_harbor = BashOperator(
-    task_id='delete_harbor',
+# Task: Delete JFrog
+delete_jfrog = BashOperator(
+    task_id='delete_jfrog',
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Deleting Harbor"
+    echo "Deleting JFrog Artifactory"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -585,13 +591,13 @@ delete_harbor = BashOperator(
     
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
-         cd /opt/kcli-pipelines && \
-         ./harbor/deploy.sh delete" || \
+         cd /opt/qubinode-pipelines && \
+         ./jfrog/deploy.sh delete" || \
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "kcli delete vm $VM_NAME -y" || \
         echo "[WARN] VM may not exist"
     
-    echo "[OK] Harbor deleted"
+    echo "[OK] JFrog Artifactory deleted"
     ''',
     execution_timeout=timedelta(minutes=10),
     dag=dag,
@@ -604,7 +610,7 @@ check_status = BashOperator(
     bash_command='''
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Harbor Status"
+    echo "JFrog Artifactory Status"
     echo "========================================"
     
     VM_NAME="{{ params.vm_name }}"
@@ -621,7 +627,7 @@ check_status = BashOperator(
         echo ""
         echo "Health Check:"
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -sk https://$IP/api/v2.0/health 2>/dev/null" || echo "Health check failed"
+            "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null" || echo "Health check failed"
     fi
     ''',
     dag=dag,
@@ -703,11 +709,11 @@ EOF
 
 # Define task dependencies
 # Main create flow
-decide_action_task >> check_prerequisites >> validate_environment >> create_harbor
-create_harbor >> register_dns >> wait_for_harbor >> validate_harbor_health >> deployment_complete
+decide_action_task >> check_prerequisites >> validate_environment >> create_jfrog
+create_jfrog >> register_dns >> wait_for_jfrog >> validate_jfrog_health >> deployment_complete
 
 # Alternative flows
-decide_action_task >> delete_harbor
+decide_action_task >> delete_jfrog
 decide_action_task >> check_status
 decide_action_task >> health_check
 
