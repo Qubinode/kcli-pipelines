@@ -33,9 +33,9 @@ jobs:
       - name: Install Apache Airflow and dependencies
         run: |
           pip install --upgrade pip
-          pip install apache-airflow==2.7.3
-          pip install apache-airflow-providers-ssh
-          pip install pyyaml
+          # Install Airflow with constrained provider versions to avoid Airflow 3.x upgrade
+          # apache-airflow-providers-ssh>=3.0.0,<4.0.0 is compatible with Airflow 2.7.x
+          pip install "apache-airflow==2.7.3" "apache-airflow-providers-ssh>=3.0.0,<4.0.0" pyyaml
 
           # Find Python scripts directory and add to PATH
           SCRIPTS_DIR=$(python -c "import sysconfig; print(sysconfig.get_path('scripts'))")
