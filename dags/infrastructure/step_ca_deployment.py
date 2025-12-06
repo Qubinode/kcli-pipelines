@@ -1,6 +1,6 @@
 """
 Airflow DAG: Step-CA Certificate Authority Deployment
-kcli-pipelines integration per ADR-0047
+qubinode-pipelines integration per ADR-0047
 
 This DAG deploys a Step-CA certificate authority server for:
 - Disconnected OpenShift installs
@@ -10,7 +10,7 @@ This DAG deploys a Step-CA certificate authority server for:
 
 Integrates with: ocp4-disconnected-helper
 
-Calls: /opt/kcli-pipelines/step-ca-server/ scripts
+Calls: /opt/qubinode-pipelines/step-ca-server/ scripts
 """
 
 from datetime import datetime, timedelta
@@ -19,7 +19,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
+KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
 STEP_CA_DIR = f'{KCLI_PIPELINES_DIR}/step-ca-server'
 
 default_args = {
@@ -38,7 +38,7 @@ dag = DAG(
     description='Deploy Step-CA certificate authority for disconnected installs',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'step-ca', 'certificates', 'disconnected'],
+    tags=['qubinode', 'qubinode-pipelines', 'step-ca', 'certificates', 'disconnected'],
     params={
         'action': 'create',  # create, delete, status
         'domain': 'example.com',  # Domain for certificates
@@ -121,7 +121,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating Step-CA Deployment Environment"
@@ -142,10 +142,10 @@ validate_environment = BashOperator(
     # Check for step-ca-server scripts
     echo "Checking Step-CA scripts..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "test -d /opt/kcli-pipelines/step-ca-server"; then
+        "test -d /opt/qubinode-pipelines/step-ca-server"; then
         echo "[OK] Step-CA scripts found"
     else
-        echo "[ERROR] Step-CA scripts not found at /opt/kcli-pipelines/step-ca-server"
+        echo "[ERROR] Step-CA scripts not found at /opt/qubinode-pipelines/step-ca-server"
         exit 1
     fi
     
@@ -162,14 +162,14 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Configure kcli profile
 configure_profile = BashOperator(
     task_id='configure_kcli_profile',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Configuring Step-CA kcli Profile"
@@ -192,12 +192,12 @@ configure_profile = BashOperator(
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
          export CUSTOM_PROFILE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          source helper_scripts/default.env 2>/dev/null || true && \
          bash step-ca-server/configure-kcli-profile.sh"
     
     echo "[OK] Profile configuration complete"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )
@@ -205,7 +205,7 @@ configure_profile = BashOperator(
 # Task: Create Step-CA VM
 create_step_ca = BashOperator(
     task_id='create_step_ca_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Creating Step-CA Server VM"
@@ -234,7 +234,7 @@ create_step_ca = BashOperator(
          export COMMUNITY_VERSION={{ params.community_version }} && \
          export INITIAL_PASSWORD=password && \
          export NET_NAME={{ params.network }} && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./step-ca-server/deploy.sh create" || true
     
     # Verify VM was created
@@ -245,7 +245,7 @@ create_step_ca = BashOperator(
         echo "[ERROR] Step-CA VM was not created"
         exit 1
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
 )
@@ -253,7 +253,7 @@ create_step_ca = BashOperator(
 # Task: Wait for Step-CA VM
 wait_for_vm = BashOperator(
     task_id='wait_for_step_ca_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for Step-CA VM"
@@ -288,7 +288,7 @@ wait_for_vm = BashOperator(
     
     echo "[ERROR] Timeout waiting for Step-CA VM"
     exit 1
-    ''',
+    """,
     execution_timeout=timedelta(minutes=15),
     dag=dag,
 )
@@ -296,7 +296,7 @@ wait_for_vm = BashOperator(
 # Task: Configure Step-CA
 configure_step_ca = BashOperator(
     task_id='configure_step_ca',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Configuring Step-CA Server"
@@ -335,7 +335,7 @@ configure_step_ca = BashOperator(
     # Copy local configuration script to VM and run it
     echo "Copying and running Step-CA configuration..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "scp -o StrictHostKeyChecking=no /opt/kcli-pipelines/step-ca-server/configure-step-ca-local.sh cloud-user@$IP:/tmp/ && \
+        "scp -o StrictHostKeyChecking=no /opt/qubinode-pipelines/step-ca-server/configure-step-ca-local.sh cloud-user@$IP:/tmp/ && \
          ssh -o StrictHostKeyChecking=no cloud-user@$IP 'echo password | sudo tee /tmp/initial_password > /dev/null && \
          chmod +x /tmp/configure-step-ca-local.sh && \
          sudo /tmp/configure-step-ca-local.sh $DOMAIN $FREEIPA_IP'"
@@ -349,7 +349,7 @@ configure_step_ca = BashOperator(
         echo "[WARN] Step-CA may need additional configuration"
         echo "SSH to the VM: ssh cloud-user@$IP"
     fi
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -357,7 +357,7 @@ configure_step_ca = BashOperator(
 # Task: Register CA with system
 register_ca = BashOperator(
     task_id='register_ca',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Registering Step-CA with System"
@@ -400,7 +400,7 @@ register_ca = BashOperator(
     echo "To bootstrap other clients:"
     echo "  step ca bootstrap --ca-url https://$IP:443 --fingerprint $FINGERPRINT --install"
     echo "========================================"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )
@@ -408,7 +408,7 @@ register_ca = BashOperator(
 # Task: Validate deployment
 validate_deployment = BashOperator(
     task_id='validate_deployment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating Step-CA Deployment"
@@ -452,14 +452,14 @@ validate_deployment = BashOperator(
     echo ""
     echo "To generate certificates:"
     echo "  step ca certificate <hostname> <cert.pem> <key.pem>"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Delete Step-CA
 delete_step_ca = BashOperator(
     task_id='delete_step_ca',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Deleting Step-CA Server"
@@ -476,11 +476,11 @@ delete_step_ca = BashOperator(
          export ACTION=delete && \
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./deploy-vm.sh"
     
     echo "[OK] Step-CA server deleted"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -488,7 +488,7 @@ delete_step_ca = BashOperator(
 # Task: Check status
 check_status = BashOperator(
     task_id='check_status',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Step-CA Status"
@@ -510,7 +510,7 @@ check_status = BashOperator(
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "curl -sk https://$IP:443/health 2>/dev/null" || echo "Health check failed"
     fi
-    ''',
+    """,
     dag=dag,
 )
 

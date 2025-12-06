@@ -6,3 +6,53 @@ aider-env/
 __pycache__/
 *.pyc
 .vault_password
+
+# Python
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Airflow
+airflow_home/
+logs/
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# SSH keys
+ssh_keys/
+ssh_key
+id_rsa
+*.pem
+
+# Temporary files
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.backup
+*.bak
+*.old

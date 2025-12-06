@@ -1,0 +1,26 @@
+---
+- hosts: "{{ target_hosts }}"
+  tasks:
+  - name: Run nmcli to get active device information
+    shell: nmcli -t -f GENERAL.CON-UUID device show
+    register: nmcli_output
+    changed_when: false
+
+  - name: Parse nmcli output to extract CON-UUID
+    set_fact:
+      con_uuid: "{{ nmcli_output.stdout_lines[0].split(':')[1] }}"
+    when: nmcli_output.stdout_lines | length > 0
+
+  - name: Print CON-UUID for active device
+    debug:
+      var: con_uuid
+
+  - name: Update DNS
+    community.general.nmcli:
+      type: ethernet
+      conn_name: "{{ con_uuid }}"
+      dns4:
+        -  "{{ dns_server }}"
+        -  "{{ dns_server_two }}"
+      state: present
+    become: true

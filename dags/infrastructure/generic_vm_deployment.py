@@ -1,6 +1,6 @@
 """
 Airflow DAG: Generic VM Deployment
-kcli-pipelines integration per ADR-0047
+qubinode-pipelines integration per ADR-0047
 
 This DAG deploys VMs using kcli profiles. Supports:
 - RHEL 8/9
@@ -10,7 +10,7 @@ This DAG deploys VMs using kcli profiles. Supports:
 - OpenShift Jumpbox
 - And other kcli profiles
 
-Calls: /opt/kcli-pipelines/deploy-vm.sh
+Calls: /opt/qubinode-pipelines/deploy-vm.sh
 """
 
 from datetime import datetime, timedelta
@@ -19,7 +19,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
+KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
 
 default_args = {
     'owner': 'qubinode',
@@ -37,7 +37,7 @@ dag = DAG(
     description='Deploy VMs using kcli profiles (RHEL, Fedora, Ubuntu, etc.)',
     schedule=None,
     catchup=False,
-    tags=['qubinode', 'kcli-pipelines', 'vm', 'infrastructure'],
+    tags=['qubinode', 'qubinode-pipelines', 'vm', 'infrastructure'],
     params={
         'action': 'create',  # create, delete, status
         'vm_profile': 'rhel9',  # VM profile to deploy
@@ -103,7 +103,7 @@ decide_action_task = BranchPythonOperator(
 # Task: Validate environment
 validate_environment = BashOperator(
     task_id='validate_environment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating VM Deployment Environment"
@@ -144,14 +144,14 @@ validate_environment = BashOperator(
     
     echo ""
     echo "[OK] Environment validation complete"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Configure kcli profile
 configure_profile = BashOperator(
     task_id='configure_kcli_profile',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Configuring kcli Profile"
@@ -165,7 +165,7 @@ configure_profile = BashOperator(
     echo "Community Version: $COMMUNITY_VERSION"
     
     # Check if profile-specific configuration exists
-    PROFILE_CONFIG="/opt/kcli-pipelines/${VM_PROFILE}/configure-kcli-profile.sh"
+    PROFILE_CONFIG="/opt/qubinode-pipelines/${VM_PROFILE}/configure-kcli-profile.sh"
     
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "if [ -f '$PROFILE_CONFIG' ]; then
@@ -174,7 +174,7 @@ configure_profile = BashOperator(
             export COMMUNITY_VERSION=$COMMUNITY_VERSION
             export TARGET_SERVER=$TARGET_SERVER
             export CICD_PIPELINE=true
-            cd /opt/kcli-pipelines
+            cd /opt/qubinode-pipelines
             source helper_scripts/default.env 2>/dev/null || true
             bash $PROFILE_CONFIG
         else
@@ -183,7 +183,7 @@ configure_profile = BashOperator(
         fi"
     
     echo "[OK] Profile configuration complete"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=5),
     dag=dag,
 )
@@ -191,10 +191,10 @@ configure_profile = BashOperator(
 # Task: Create VM
 create_vm = BashOperator(
     task_id='create_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
-    echo "Creating VM via kcli-pipelines"
+    echo "Creating VM via qubinode-pipelines"
     echo "========================================"
     
     VM_PROFILE="{{ params.vm_profile }}"
@@ -220,7 +220,7 @@ create_vm = BashOperator(
     fi
     
     # Execute deploy-vm.sh on host via SSH (ADR-0047)
-    echo "Calling kcli-pipelines/deploy-vm.sh..."
+    echo "Calling qubinode-pipelines/deploy-vm.sh..."
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
          export VM_PROFILE=$VM_PROFILE && \
@@ -228,12 +228,12 @@ create_vm = BashOperator(
          export COMMUNITY_VERSION=$COMMUNITY_VERSION && \
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./deploy-vm.sh"
     
     echo ""
     echo "[OK] VM deployment initiated"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=30),
     dag=dag,
 )
@@ -241,7 +241,7 @@ create_vm = BashOperator(
 # Task: Wait for VM to be ready
 wait_for_vm = BashOperator(
     task_id='wait_for_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Waiting for VM to be Ready"
@@ -294,7 +294,7 @@ wait_for_vm = BashOperator(
     done
     
     echo "[WARN] Timeout waiting for VM - may still be provisioning"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=15),
     dag=dag,
 )
@@ -302,7 +302,7 @@ wait_for_vm = BashOperator(
 # Task: Validate deployment
 validate_deployment = BashOperator(
     task_id='validate_deployment',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Validating VM Deployment"
@@ -340,14 +340,14 @@ validate_deployment = BashOperator(
     echo "Access:"
     echo "  SSH: ssh cloud-user@$IP"
     echo "  Console: kcli console $VM_NAME"
-    ''',
+    """,
     dag=dag,
 )
 
 # Task: Delete VM
 delete_vm = BashOperator(
     task_id='delete_vm',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "Deleting VM"
@@ -371,11 +371,11 @@ delete_vm = BashOperator(
          export ACTION=delete && \
          export TARGET_SERVER=$TARGET_SERVER && \
          export CICD_PIPELINE=true && \
-         cd /opt/kcli-pipelines && \
+         cd /opt/qubinode-pipelines && \
          ./deploy-vm.sh"
     
     echo "[OK] VM deleted"
-    ''',
+    """,
     execution_timeout=timedelta(minutes=10),
     dag=dag,
 )
@@ -383,7 +383,7 @@ delete_vm = BashOperator(
 # Task: Check status
 check_status = BashOperator(
     task_id='check_status',
-    bash_command='''
+    bash_command="""
     export PATH="/home/airflow/.local/bin:/usr/local/bin:$PATH"
     echo "========================================"
     echo "VM Status"
@@ -400,7 +400,7 @@ check_status = BashOperator(
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "kcli list vm | grep -E '$VM_PROFILE|Name'" 2>/dev/null
     fi
-    ''',
+    """,
     dag=dag,
 )
 
