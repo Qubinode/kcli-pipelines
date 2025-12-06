@@ -37,6 +37,20 @@ jobs:
           pip install apache-airflow-providers-ssh
           pip install pyyaml
 
+          # Find Python scripts directory and add to PATH
+          SCRIPTS_DIR=$(python -c "import sysconfig; print(sysconfig.get_path('scripts'))")
+          echo "Scripts directory: $SCRIPTS_DIR"
+          echo "$SCRIPTS_DIR" >> $GITHUB_PATH
+
+          # Verify airflow is installed
+          if [[ -x "$SCRIPTS_DIR/airflow" ]]; then
+            "$SCRIPTS_DIR/airflow" version
+          else
+            echo "[ERROR] airflow binary not found in $SCRIPTS_DIR"
+            pip show apache-airflow | head -10
+            exit 1
+          fi
+
       - name: Validate DAG Python Syntax
         run: |
           echo "========================================"
