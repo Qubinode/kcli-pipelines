@@ -297,6 +297,7 @@ Legacy documentation for individual VM deployments:
 - **Issues**: Report bugs or request features via [GitHub Issues](https://github.com/Qubinode/qubinode-pipelines/issues)
 - **Discussions**: Ask questions in [GitHub Discussions](https://github.com/Qubinode/qubinode-pipelines/discussions)
 - **Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
+- **AI Agents**: See [AGENTS.md](AGENTS.md) for AI coding agent instructions (Claude, Cursor, Copilot, etc.)
 
 ## License
 

@@ -178,6 +178,7 @@ Before submitting a PR, verify:
 
 ## Related Documentation
 
+- [AGENTS.md](AGENTS.md) - AI coding agent instructions (Claude, Cursor, Copilot, etc.)
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Full contribution workflow
 - [dags/TEMPLATE.py](dags/TEMPLATE.py) - Complete DAG template with examples
 - [dags/registry.yaml](dags/registry.yaml) - DAG metadata registry
@@ -189,3 +190,4 @@ Before submitting a PR, verify:
 | ADR-0046 | SSH Execution Pattern & Validation Pipeline |
 | ADR-0047 | qubinode-pipelines Repository Architecture |
 | ADR-0061 | Multi-Repository Architecture (Tier 1/2/3) |
+| ADR-0062 | External Project Integration Guide |
