@@ -1,3 +1,4 @@
+---
 # Pre-commit hooks for qubinode-pipelines
 # Install with: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
@@ -48,13 +49,15 @@ repos:
         stages: [commit]
         fail_fast: false
 
-  # Secret detection with gitleaks
+  # Secret detection with gitleaks (blocks pushes, allows commits)
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.18.0
     hooks:
       - id: gitleaks
         args: ['--no-banner', '--verbose']
-        stages: [commit, push]
+        stages: [push]
+        # Only runs on push to block secrets from reaching remote
+        # Commits are allowed to proceed for local development
 
   # YAML validation (for Airflow configs, etc.)
   - repo: https://github.com/adrienverge/yamllint

@@ -1,3 +1,4 @@
+---
 # Simplified pre-commit config (if full version has issues)
 # This version uses local hooks and doesn't require external repos
 
@@ -10,25 +11,25 @@ repos:
         entry: bash -c 'sed -i "s/[[:space:]]*$//" "$@"' --
         language: system
         files: \.(py|yaml|yml|sh|md)$
-      
+
       - id: end-of-file-fixer
         name: Fix End of Files
         entry: bash -c 'for f in "$@"; do [ -s "$f" ] && [ "$(tail -c1 "$f")" != "" ] && echo >> "$f"; done' --
         language: system
         files: \.(py|yaml|yml|sh|md)$
-      
+
       - id: check-yaml
         name: Check YAML
         entry: bash -c 'for f in "$@"; do python3 -c "import yaml; yaml.safe_load(open(\"$f\"))" || exit 1; done' --
         language: system
         files: \.(yaml|yml)$
-      
+
       - id: detect-private-key
         name: Detect Private Keys
         entry: bash -c 'grep -l "BEGIN.*PRIVATE KEY" "$@" && exit 1 || exit 0' --
         language: system
         files: .*
-      
+
       - id: airflow-dag-validation
         name: Airflow DAG Validation
         entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && ./scripts/validate-dags.sh' --
@@ -36,11 +37,16 @@ repos:
         files: ^dags/.*\.py$
         pass_filenames: false
         always_run: true
-      
+
       - id: gitleaks-local
-        name: Gitleaks (if installed)
-        entry: bash -c 'if command -v gitleaks >/dev/null; then gitleaks detect --no-banner --source . --verbose; else echo "gitleaks not installed, skipping"; fi' --
+        name: Gitleaks (if installed, push only)
+        entry: >
+          bash -c 'if command -v gitleaks >/dev/null; then
+            gitleaks detect --no-banner --source . --verbose
+          else
+            echo "gitleaks not installed, skipping"
+          fi' --
         language: system
         pass_filenames: false
-        always_run: true
-
+        stages: [push]
+        # Only runs on push to block secrets from reaching remote
