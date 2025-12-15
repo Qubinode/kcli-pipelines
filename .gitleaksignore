@@ -1,0 +1,13 @@
+# Gitleaks ignore patterns for qubinode-pipelines
+# Add patterns here to exclude false positives
+
+# Example patterns (uncomment and modify as needed):
+# ^examples/.*\.env$
+# ^.*/\.vault_password$
+# ^docs/.*\.md$
+
+# Common false positives
+^.*\.example$
+^.*\.template$
+^.*\.sample$
+
