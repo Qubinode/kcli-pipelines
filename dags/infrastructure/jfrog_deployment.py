@@ -11,7 +11,7 @@ Editions:
 - oss: Open Source (Docker registry only)
 - pro: Professional (All package types)
 
-Calls: /opt/qubinode-pipelines/jfrog/deploy.sh
+Calls: /opt/kcli-pipelines/jfrog/deploy.sh
 """
 
 from datetime import datetime, timedelta
@@ -20,7 +20,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import BranchPythonOperator
 
 # Configuration
-KCLI_PIPELINES_DIR = '/opt/qubinode-pipelines'
+KCLI_PIPELINES_DIR = '/opt/kcli-pipelines'
 JFROG_DIR = f'{KCLI_PIPELINES_DIR}/jfrog'
 
 default_args = {
@@ -48,10 +48,10 @@ dag = DAG(
         'cert_mode': 'step-ca',  # step-ca or self-signed
         'domain': 'example.com',  # Domain for certificates
         'target_server': 'localhost',  # Target server
-        'network': 'default',  # Primary network (DHCP for management)
-        'isolated_network': '1924',  # Isolated network for disconnected OCP
-        'isolated_ip': '192.168.49.30',  # Static IP on isolated network
-        'isolated_gateway': '192.168.49.1',  # Gateway for isolated network
+        'network': 'default',  # Primary network (DHCP for management - 192.168.122.x)
+        'isolated_network': '1924',  # Isolated network for disconnected OCP (VLAN 1924)
+        'isolated_ip': '192.168.50.30',  # Static IP on isolated network (VLAN 1924)
+        'isolated_gateway': '192.168.50.1',  # Gateway for isolated network (VyOS router)
         'step_ca_vm': 'step-ca-server',  # Step-CA server VM name (for step-ca mode)
     },
     doc_md="""
@@ -268,7 +268,7 @@ validate_environment = BashOperator(
     # Check for JFrog scripts
     echo "Checking JFrog deployment scripts..."
     if ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "test -f /opt/qubinode-pipelines/jfrog/deploy.sh"; then
+        "test -f /opt/kcli-pipelines/jfrog/deploy.sh"; then
         echo "[OK] JFrog deploy script found"
     else
         echo "[ERROR] JFrog deploy.sh not found"
@@ -308,15 +308,21 @@ create_jfrog = BashOperator(
     CERT_MODE="{{ params.cert_mode }}"
     DOMAIN="{{ params.domain }}"
     NETWORK="{{ params.network }}"
-    ISOLATED_NETWORK="{{ params.isolated_network }}"
-    ISOLATED_IP="{{ params.isolated_ip }}"
-    ISOLATED_GATEWAY="{{ params.isolated_gateway }}"
     STEP_CA_VM="{{ params.step_ca_vm }}"
+    
+    # Set isolated network variables - always set with defaults from DAG params
+    ISOLATED_NETWORK="{{ params.isolated_network | default('1924') }}"
+    ISOLATED_IP="{{ params.isolated_ip | default('192.168.50.30') }}"
+    ISOLATED_GATEWAY="{{ params.isolated_gateway | default('192.168.50.1') }}"
     
     echo "VM Name: $VM_NAME"
     echo "JFrog Version: $JFROG_VERSION"
     echo "JFrog Edition: $JFROG_EDITION"
     echo "Certificate Mode: $CERT_MODE"
+    echo "Primary Network: $NETWORK"
+    echo "Isolated Network: $ISOLATED_NETWORK"
+    echo "Isolated IP: $ISOLATED_IP"
+    echo "Isolated Gateway: $ISOLATED_GATEWAY"
     echo "Dual-NIC: $NETWORK (mgmt) + $ISOLATED_NETWORK ($ISOLATED_IP)"
     
     # Check if VM already exists
@@ -356,7 +362,7 @@ create_jfrog = BashOperator(
                  export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
                  export ISOLATED_IP=$ISOLATED_IP && \
                  export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
-                 cd /opt/qubinode-pipelines && \
+                 cd /opt/kcli-pipelines && \
                  ./jfrog/deploy.sh create"
         else
             echo "[WARN] Step-CA not available, using self-signed"
@@ -376,7 +382,7 @@ create_jfrog = BashOperator(
              export ISOLATED_NET_NAME=$ISOLATED_NETWORK && \
              export ISOLATED_IP=$ISOLATED_IP && \
              export ISOLATED_GATEWAY=$ISOLATED_GATEWAY && \
-             cd /opt/qubinode-pipelines && \
+             cd /opt/kcli-pipelines && \
              ./jfrog/deploy.sh create"
     fi
     
@@ -461,14 +467,19 @@ validate_jfrog_health = BashOperator(
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
         ATTEMPT=$((ATTEMPT + 1))
         
-        # Check Artifactory ping endpoint
+        # Check Artifactory ping endpoint (try port 8443 first, then fallback to 8081)
         PING=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null" || true)
+            "curl -sk https://$IP:8443/artifactory/api/system/ping 2>/dev/null || \
+             curl -s http://$IP:8081/artifactory/api/system/ping 2>/dev/null" || true)
         
         if echo "$PING" | grep -qi "OK"; then
             echo ""
             echo "[OK] JFrog Artifactory is HEALTHY"
             echo "Ping: $PING"
+            echo ""
+            echo "Access URLs:"
+            echo "  - https://$IP:8443 (nginx reverse proxy)"
+            echo "  - http://$IP:8081 (direct)"
             exit 0
         fi
         
@@ -479,7 +490,8 @@ validate_jfrog_health = BashOperator(
     echo ""
     echo "[WARN] Artifactory health check timed out"
     echo "Artifactory may still be initializing. Check manually:"
-    echo "  curl http://$IP:8082/artifactory/api/system/ping"
+    echo "  curl -k https://$IP:8443/artifactory/api/system/ping"
+    echo "  curl http://$IP:8081/artifactory/api/system/ping"
     """,
     execution_timeout=timedelta(minutes=20),
     dag=dag,
@@ -508,16 +520,22 @@ deployment_complete = BashOperator(
     echo "  VM Name: $VM_NAME"
     echo "  IP Address: $IP"
     echo "  Edition: $JFROG_EDITION"
-    echo "  UI URL: http://${IP}:8082/ui"
-    echo "  API URL: http://${IP}:8082/artifactory"
+    echo "  FQDN: jfrog.${DOMAIN}"
+    echo ""
+    echo "Access URLs:"
+    echo "  - HTTPS (nginx): https://${IP}:8443"
+    echo "  - HTTPS (FQDN): https://jfrog.${DOMAIN}:8443"
+    echo "  - Direct HTTP: http://${IP}:8081"
+    echo "  - UI: https://${IP}:8443/ui"
+    echo "  - API: https://${IP}:8443/artifactory"
     echo ""
     echo "Default credentials:"
     echo "  User: admin"
     echo "  Password: password"
     echo ""
     echo "To configure as Docker registry:"
-    echo "  podman login ${IP}:8082"
-    echo "  podman push myimage:latest ${IP}:8082/docker-local/myimage:latest"
+    echo "  podman login --tls-verify=false ${IP}:8443"
+    echo "  podman push myimage:latest ${IP}:8443/docker-local/myimage:latest"
     
     echo ""
     echo "========================================"
@@ -553,8 +571,10 @@ health_check = BashOperator(
     echo ""
     
     echo "Checking JFrog Artifactory health..."
+    # Try port 8443 first (nginx reverse proxy), then fallback to 8081
     PING=$(ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-        "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null")
+        "curl -sk https://$IP:8443/artifactory/api/system/ping 2>/dev/null || \
+         curl -s http://$IP:8081/artifactory/api/system/ping 2>/dev/null")
     
     if echo "$PING" | grep -qi "OK"; then
         echo "[OK] JFrog Artifactory is HEALTHY"
@@ -564,7 +584,13 @@ health_check = BashOperator(
         echo ""
         echo "Version Info:"
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -s http://$IP:8082/artifactory/api/system/version 2>/dev/null" | jq . || true
+            "curl -sk https://$IP:8443/artifactory/api/system/version 2>/dev/null || \
+             curl -s http://$IP:8081/artifactory/api/system/version 2>/dev/null" | jq . || true
+        
+        echo ""
+        echo "Access URLs:"
+        echo "  - https://$IP:8443 (nginx reverse proxy)"
+        echo "  - http://$IP:8081 (direct)"
         exit 0
     else
         echo "[ERROR] JFrog Artifactory is NOT HEALTHY"
@@ -591,7 +617,7 @@ delete_jfrog = BashOperator(
     
     ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
         "export VM_NAME=$VM_NAME && \
-         cd /opt/qubinode-pipelines && \
+         cd /opt/kcli-pipelines && \
          ./jfrog/deploy.sh delete" || \
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
             "kcli delete vm $VM_NAME -y" || \
@@ -627,7 +653,12 @@ check_status = BashOperator(
         echo ""
         echo "Health Check:"
         ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@localhost \
-            "curl -s http://$IP:8082/artifactory/api/system/ping 2>/dev/null" || echo "Health check failed"
+            "curl -sk https://$IP:8443/artifactory/api/system/ping 2>/dev/null || \
+             curl -s http://$IP:8081/artifactory/api/system/ping 2>/dev/null" || echo "Health check failed"
+        echo ""
+        echo "Access URLs:"
+        echo "  - https://$IP:8443 (nginx reverse proxy)"
+        echo "  - http://$IP:8081 (direct)"
     fi
     """,
     dag=dag,
@@ -656,6 +687,7 @@ register_dns = BashOperator(
     fi
     
     echo "Hostname: $VM_NAME"
+    echo "FQDN: jfrog.${DOMAIN}"
     echo "IP: $IP"
     echo "Domain: $DOMAIN"
     
@@ -671,19 +703,31 @@ register_dns = BashOperator(
     echo "FreeIPA IP: $FREEIPA_IP"
     echo ""
     
-    # Add DNS record using LDAP EXTERNAL auth
-    echo "[INFO] Adding DNS A record via LDAP..."
-    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF
+    # Add DNS records using ipa command (preferred) or LDAP fallback
+    echo "[INFO] Adding DNS A records..."
+    
+    # Try ipa command first (requires authentication)
+    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF || true
+# Try to add jfrog.${DOMAIN} record
+ipa dnsrecord-add ${DOMAIN} jfrog --a-rec ${IP} 2>/dev/null || \
+ipa dnsrecord-mod ${DOMAIN} jfrog --a-rec ${IP} 2>/dev/null || \
+echo "[INFO] Using LDAP fallback for DNS registration"
+EOF
+    
+    # Fallback to LDAP if ipa command fails
+    echo "[INFO] Adding DNS A record via LDAP (fallback)..."
+    ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$FREEIPA_IP bash -s <<EOF || true
+# Add jfrog.${DOMAIN} record
 ldapadd -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
-dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
+dn: idnsname=jfrog,idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
 objectClass: idnsrecord
 objectClass: top
-idnsname: ${VM_NAME}
+idnsname: jfrog
 arecord: ${IP}
 LDIF
 
 ldapmodify -Y EXTERNAL -H ldapi://%2Frun%2Fslapd-EXAMPLE-COM.socket 2>/dev/null <<LDIF || true
-dn: idnsname=${VM_NAME},idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
+dn: idnsname=jfrog,idnsname=${DOMAIN}.,cn=dns,dc=example,dc=com
 changetype: modify
 replace: arecord
 arecord: ${IP}
@@ -694,12 +738,13 @@ EOF
     echo "[INFO] Verifying DNS..."
     sleep 2
     RESOLVED=$(ssh -o StrictHostKeyChecking=no root@localhost \
-        "dig +short ${VM_NAME}.${DOMAIN} @${FREEIPA_IP}" 2>/dev/null || true)
+        "dig +short jfrog.${DOMAIN} @${FREEIPA_IP}" 2>/dev/null || true)
     
     if [ "$RESOLVED" = "$IP" ]; then
-        echo "[OK] DNS verified: ${VM_NAME}.${DOMAIN} -> ${RESOLVED}"
+        echo "[OK] DNS verified: jfrog.${DOMAIN} -> ${RESOLVED}"
     else
-        echo "[INFO] DNS may need time to propagate"
+        echo "[INFO] DNS may need time to propagate or manual configuration required"
+        echo "Expected: jfrog.${DOMAIN} -> ${IP}"
     fi
     """,
     execution_timeout=timedelta(minutes=5),
